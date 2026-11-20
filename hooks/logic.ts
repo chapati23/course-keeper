@@ -191,13 +191,38 @@ export type CheckReply =
     }
 
 const FIELD = /^(verdict|reference|alert|evidence|note)\s*:\s*(.*)$/i
-/** `invariant <number>`, or `instruction "<text>"` in straight or curly quotes. */
-const REFERENCE = /^(?:invariant\s+\d+|instruction\s+["“].*\S.*["”])$/i
+/**
+ * The start of a reference field, after any run of backticks, asterisks or
+ * underscores: `invariant <number>`, or `instruction "<text>"` with an
+ * optional colon and the text in straight, curly, German, French or single
+ * quotes. The instruction runs to the last mark in the field that closes
+ * its opening mark, so an apostrophe after a double-quoted text does not
+ * end it. What comes after the number or the closing mark is not read.
+ */
+const REFERENCE = {
+  invariant: /^[`*_]*invariant\s+(\d+)\b/i,
+  instruction:
+    /^[`*_]*instruction\s*:?\s*(?:"(.*\S.*)"|“(.*\S.*)”|„(.*\S.*)[“”]|«(.*\S.*)»|'(.*\S.*)'|‘(.*\S.*)’)/i,
+}
+
+/** The canonical form of a reference field, or undefined when it has none. */
+function canonicalReference(field: string): string | undefined {
+  const invariant = REFERENCE.invariant.exec(field)
+  if (invariant) return `invariant ${invariant[1] ?? ''}`
+  const instruction = REFERENCE.instruction.exec(field)
+  const text = instruction?.slice(1).find(group => group !== undefined)
+  if (text !== undefined) return `instruction "${text.trim()}"`
+
+  return undefined
+}
 
 /**
  * Reads a check reply. Returns undefined for a malformed reply: a field
  * given twice, an unknown verdict, a deviation with a field missing, or a
- * reference that is neither `invariant <number>` nor `instruction "<text>"`.
+ * reference that does not start with `invariant <number>` or
+ * `instruction "<text>"`. The reference comes back in its canonical form,
+ * `invariant <number>` or `instruction "<text>"` in straight quotes, with
+ * anything after the number or the closing mark dropped.
  */
 export function parseCheckReply(reply: string): CheckReply | undefined {
   const fields = new Map<string, string>()
@@ -230,10 +255,9 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
   if (verdict === 'none') return { verdict: 'none' }
   if (verdict !== 'deviation') return undefined
 
-  // The reference is tested whole, before it is cut: a long quote keeps
+  // The reference is read whole, before it is cut: a long quote keeps
   // its closing mark only before the cut.
-  const fullReference = clean(fields.get('reference') ?? '', Infinity)
-  const reference = clean(fullReference, LIMITS.reference)
+  const canonical = canonicalReference(clean(fields.get('reference') ?? '', Infinity))
   const alert = clean(fields.get('alert') ?? '', LIMITS.alert)
   const evidence = clean(
     unquote(fields.get('evidence') ?? ''),
@@ -241,8 +265,9 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
   )
   const note = clean(fields.get('note') ?? '', LIMITS.note)
 
-  if (!REFERENCE.test(fullReference)) return undefined
+  if (canonical === undefined) return undefined
   if (alert === '' || evidence === '' || note === '') return undefined
+  const reference = clean(canonical, LIMITS.reference)
 
   return { verdict: 'deviation', reference, alert, evidence, note }
 }

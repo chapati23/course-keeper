@@ -98,7 +98,12 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
 
     return { value: { isAnswered: true, text: extract, usage: USAGE } }
   })
-  on('ui.notify', () => ({ value: { isSent: false, reason: 'no-surface' } }))
+  const notified: string[] = []
+  on('ui.notify', (_, e) => {
+    notified.push(e.text)
+
+    return { value: { isSent: false, reason: 'no-surface' } }
+  })
   on('prompt.submit', (_, e) => {
     if (e.origin.kind === 'plugin' && options.refuse?.()) return { drop: 'a Stop stands' }
     const entered =
@@ -118,7 +123,7 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
     return { value: undefined }
   })
 
-  return { clock, forks, submitted, files, toasts, completions }
+  return { clock, forks, submitted, files, toasts, completions, notified }
 }
 
 async function personTypes($: Engine, text: string) {
@@ -560,9 +565,11 @@ test('the store keeps the newest record when an older save is slow', async ($, o
   // First save: the session has a person. Second save: checks are off.
   await personTypes($, 'ok')
   await settle(clock)
-  expect(await command($, 'off')).toBe('Course keeper checks are off for this session.')
+  // The answer waits for the saves, so it comes after the release.
+  const off = command($, 'off')
   await settle(clock)
   release()
+  expect(await off).toBe('Course keeper checks are off for this session.')
   await settle(clock)
 
   expect(writes).toBe(2)
@@ -628,5 +635,105 @@ test('a check that lost its in-flight mark does not replace a newer alert', asyn
     'The session adds a price table to the client, which contradicts invariant 1.',
   )
   await ui.unmount()
-  expect(await status($)).toContain('did not run: a newer check replaced this one.')
+  // The dropped reply leaves the newer check's outcome in the status.
+  const shown = await status($)
+  expect(shown).toMatch(/Last check: [^\n]*, verdict: deviation \(invariant 1\)\./)
+  expect(shown).not.toContain('a newer check replaced this one')
+})
+
+test('/course-keeper off during the fork of a turn check shows nothing', async ($, on) => {
+  let release = () => {}
+  const forkWait = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, forks, notified } = world(on, () => DEVIATION, 'none', { forkWait })
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+  expect(forks).toHaveLength(1)
+  // The person turns checks off while the fork runs; then it finds a deviation.
+  await command($, 'off')
+  release()
+  await settle(clock)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  await ui.unmount()
+  expect(notified).toEqual([])
+  expect(await status($)).toContain('did not run: checks are off.')
+})
+
+test('/course-keeper off answers only after the store holds the change', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock } = world(on, () => 'verdict: none', 'none', { store: false })
+  const held = new Map<string, unknown>()
+  on('store.keys', () => ({ value: [...held.keys()] }))
+  on('store.get', (_, e) => ({ value: held.get(e.key) }))
+  on('store.delete', (_, e) => {
+    held.delete(e.key)
+
+    return { value: undefined }
+  })
+  on('store.set', async (_, e) => {
+    // Every write stalls until the test lets it through.
+    await gate
+    held.set(e.key, e.value)
+
+    return { value: undefined }
+  })
+
+  let storedAtAnswer: unknown
+  let isAnswered = false
+  const off = command($, 'off').then(text => {
+    storedAtAnswer = held.get('session:session-a')
+    isAnswered = true
+
+    return text
+  })
+  await settle(clock)
+  expect(isAnswered).toBe(false)
+  release()
+  expect(await off).toBe('Course keeper checks are off for this session.')
+  expect(storedAtAnswer).toMatchObject({ record: { isOff: true } })
+})
+
+test('a withdrawn instruction stated again is no longer withdrawn when the list is full', async ($, on) => {
+  const { clock, toasts } = world(on, () => 'verdict: none', '- never use npm')
+  let held: unknown = {
+    v: 1,
+    hasPerson: true,
+    isOff: false,
+    instructions: Array.from({ length: 30 }, (_, i) => `instruction number ${i + 1}`),
+    withdrawn: ['never use npm'],
+    alerts: [],
+    current: null,
+    showDetails: false,
+    lastCheck: null,
+    checkingSince: null,
+  }
+  let version = 1
+  on('state.get', () => ({ value: { value: held, version } }))
+  on('state.set', (_, e) => {
+    if (e.ifVersion !== undefined && e.ifVersion !== version) {
+      return { value: { isSet: false, version } }
+    }
+    held = e.value
+    version += 1
+
+    return { value: { isSet: true, version } }
+  })
+  expect(await status($)).toContain('Withdrawn standing instructions:\n  - never use npm')
+
+  await personTypes($, 'never use npm in this repository')
+  await settle(clock)
+
+  // The list is full, so nothing is added and no notice shows.
+  expect(toasts).toEqual([])
+  expect(await status($)).not.toContain('Withdrawn')
+  expect(held).toMatchObject({ withdrawn: [] })
 })

@@ -295,8 +295,17 @@ async function runCheck(
   await change($, id, r => {
     // A check that took longer than CHECK_STALE_MS lost its in-flight mark,
     // and a newer check may have started and shown its own alert since.
+    // The status keeps the newer check's outcome.
     if (r.checkingSince !== started) {
-      const done = withOutcome(r, 'did not run: a newer check replaced this one', now)
+      outcome = 'did not run: a newer check replaced this one'
+      shown = undefined
+
+      return r
+    }
+    // `/course-keeper off` may have come during the fork. A check that a
+    // turn started shows nothing; one the person asked for applies its reply.
+    if (trigger === 'turn' && r.isOff) {
+      const done = withOutcome(r, 'did not run: checks are off', now)
       outcome = done.outcome
       shown = undefined
 
@@ -346,15 +355,14 @@ async function notePrompt(
   await change($, id, r => {
     const done = addInstructions(r.instructions, candidates)
     added = done.added
+    // An instruction the person states again is no longer withdrawn, also
+    // when the list is full and it was not added.
+    const before = r.withdrawn ?? []
+    const withdrawn = removeWithdrawn(before, candidates)
 
-    // An instruction the person states again is no longer withdrawn.
-    return added.length === 0
+    return added.length === 0 && withdrawn.length === before.length
       ? r
-      : {
-          ...r,
-          instructions: done.list,
-          withdrawn: removeWithdrawn(r.withdrawn ?? [], added),
-        }
+      : { ...r, instructions: done.list, withdrawn }
   })
   if (added.length > 0) $.ui.toast(addedNotice(added))
 }
@@ -374,10 +382,13 @@ async function runCommand($: $, args: string): Promise<string> {
       return `Check finished: ${await check($, 'command')}.`
     case 'off':
       await change($, id, r => (r.isOff ? r : { ...r, isOff: true }))
+      // The answer waits for the store, so a quit right after keeps the change.
+      await saving
 
       return 'Course keeper checks are off for this session.'
     case 'on':
       await change($, id, r => (r.isOff ? { ...r, isOff: false } : r))
+      await saving
 
       return 'Course keeper checks are on for this session.'
     case 'forget': {
@@ -395,6 +406,7 @@ async function runCommand($: $, args: string): Promise<string> {
               withdrawn: addWithdrawn(r.withdrawn ?? [], done.removed),
             }
       })
+      await saving
 
       return removed === undefined
         ? `No standing instruction ${rest[0] ?? ''}. ${USAGE}`

@@ -91,8 +91,8 @@ describe('the check reply', () => {
     for (const reference of [
       'invariant',
       'invariant two',
-      'invariant 2 and 3',
       'invariants 2',
+      'invariant 2x',
       'instruction',
       'instruction ""',
       'instruction " "',
@@ -104,14 +104,29 @@ describe('the check reply', () => {
     }
   })
 
-  test('invariant <number> and a quoted instruction are accepted', () => {
-    for (const reference of [
-      'INVARIANT 12',
-      'instruction "never push to main"',
-      'Instruction “never push to main”',
-    ]) {
+  test('invariant <number> and a quoted instruction are accepted in canonical form', () => {
+    for (const [reference, canonical] of [
+      ['INVARIANT 12', 'invariant 12'],
+      ['invariant 2.', 'invariant 2'],
+      ['invariant 2 (no rounding in the exporter)', 'invariant 2'],
+      ['invariant 2 and 3', 'invariant 2'],
+      ['`invariant 2`', 'invariant 2'],
+      ['Invariant 2: "amounts"', 'invariant 2'],
+      ['instruction "never push to main"', 'instruction "never push to main"'],
+      ['instruction "never push to main".', 'instruction "never push to main"'],
+      ['Instruction “never push to main”', 'instruction "never push to main"'],
+      ["instruction 'never use npm'", 'instruction "never use npm"'],
+      ['instruction „keine npm-Pakete“', 'instruction "keine npm-Pakete"'],
+      ['instruction: "never push to main"', 'instruction "never push to main"'],
+      [
+        'instruction "don\'t push to main" (the person\'s words)',
+        'instruction "don\'t push to main"',
+      ],
+    ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
-      expect(parseCheckReply(reply)).toMatchObject({ verdict: 'deviation', reference })
+      const parsed = parseCheckReply(reply)
+      const got = parsed?.verdict === 'deviation' ? parsed.reference : parsed
+      expect([reference, got]).toEqual([reference, canonical])
     }
   })
 
