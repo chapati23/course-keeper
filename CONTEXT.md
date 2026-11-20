@@ -15,7 +15,7 @@ One numbered, testable statement in the vision that a session must not contradic
 _Avoid_: rule, principle, guideline
 
 **Standing instruction**:
-A statement by the person in a session that stays in force beyond the task it was given with.
+A goal or an instruction that the person stated in a session and that stays in force beyond the task it was given with.
 _Avoid_: preference, constraint, reminder
 
 **Tracked drift**:
