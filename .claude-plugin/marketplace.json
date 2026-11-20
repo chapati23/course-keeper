@@ -1,0 +1,5 @@
+{
+  "name": "course-keeper",
+  "owner": { "name": "course-keeper" },
+  "plugins": [{ "name": "course-keeper", "source": "./" }]
+}
