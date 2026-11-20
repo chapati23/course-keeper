@@ -42,6 +42,8 @@ type Options = {
   forkWait?: Promise<void> | ((n: number) => Promise<void> | undefined)
   /** The check prompt file is read once this resolves. */
   readWait?: Promise<void>
+  /** The extract model answers once this resolves. */
+  extractWait?: Promise<void>
   /** True: a prompt the plugin submits does not enter. */
   refuse?: () => boolean
   /** What the hooks beneath do with a prompt that is not the plugin's. */
@@ -93,8 +95,9 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
     return { value: { isAnswered: true, text: fork(), usage: USAGE } }
   })
   const completions: string[] = []
-  on('model.complete', (_, e) => {
+  on('model.complete', async (_, e) => {
     completions.push(e.prompt)
+    await options.extractWait
 
     return { value: { isAnswered: true, text: extract, usage: USAGE } }
   })
@@ -736,4 +739,106 @@ test('a withdrawn instruction stated again is no longer withdrawn when the list 
   expect(toasts).toEqual([])
   expect(await status($)).not.toContain('Withdrawn')
   expect(held).toMatchObject({ withdrawn: [] })
+})
+
+test('/course-keeper forget during the extract call is not undone by its reply', async ($, on) => {
+  let release = () => {}
+  const extractWait = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, toasts, completions } = world(on, () => 'verdict: none', '- never use npm', {
+    extractWait,
+  })
+  let held: unknown = {
+    v: 1,
+    hasPerson: true,
+    isOff: false,
+    instructions: ['never use npm'],
+    withdrawn: [],
+    alerts: [],
+    current: null,
+    showDetails: false,
+    lastCheck: null,
+    checkingSince: null,
+  }
+  let version = 1
+  on('state.get', () => ({ value: { value: held, version } }))
+  on('state.set', (_, e) => {
+    if (e.ifVersion !== undefined && e.ifVersion !== version) {
+      return { value: { isSet: false, version } }
+    }
+    held = e.value
+    version += 1
+
+    return { value: { isSet: true, version } }
+  })
+
+  // The prompt states the instruction again; its reply waits.
+  await personTypes($, 'never use npm in this repository')
+  await settle(clock)
+  expect(completions).toHaveLength(1)
+  expect(await command($, 'forget 1')).toBe('Standing instruction 1 removed: "never use npm"')
+  release()
+  await settle(clock)
+
+  expect(toasts).toEqual([])
+  expect(held).toMatchObject({ instructions: [], withdrawn: ['never use npm'] })
+  expect(await status($)).toContain(
+    'Standing instructions:\n  none\n\nWithdrawn standing instructions:\n  - never use npm',
+  )
+})
+
+test('/course-keeper check after the next turn started runs without the earlier answer', async ($, on) => {
+  const { clock, forks } = world(on, () => 'verdict: none')
+
+  // No person typed a prompt, so the turn's end starts no check of its own.
+  await $.turn.start({ text: 'ok', turnId: 'turn-1' })
+  await $.turn.complete(END)
+  await settle(clock)
+  expect(forks).toHaveLength(0)
+  // Before the next turn starts, the command sends the turn's answer.
+  expect(await command($, 'check')).toBe('Check finished: verdict: none.')
+  expect(forks[0]).toContain(END.answer)
+
+  await $.turn.start({ text: 'go on', turnId: 'turn-2' })
+  expect(await command($, 'check')).toBe('Check finished: verdict: none.')
+  expect(forks).toHaveLength(2)
+  expect(forks[1]).not.toContain(END.answer)
+  expect(forks[1]).not.toContain('<final_answer>')
+})
+
+test('a store that refuses the write takes it after two old sessions are dropped', async ($, on) => {
+  const { clock } = world(on, () => 'verdict: none', 'none', { store: false })
+  const held = new Map<string, unknown>()
+  for (let i = 0; i < 5; i += 1) {
+    held.set(`session:old-${i}`, { savedAt: i, record: { v: 1 } })
+  }
+  let deleted = 0
+  on('store.keys', () => ({ value: [...held.keys()] }))
+  on('store.get', (_, e) => ({ value: held.get(e.key) }))
+  on('store.delete', (_, e) => {
+    held.delete(e.key)
+    deleted += 1
+
+    return { value: undefined }
+  })
+  on('store.set', (_, e) => {
+    // Room for the session's record only after two sessions are gone.
+    if (e.key === 'session:session-a' && deleted < 2) {
+      return { deny: 'the store is over its size limit' }
+    }
+    held.set(e.key, e.value)
+
+    return { value: undefined }
+  })
+
+  await personTypes($, 'ok')
+  await settle(clock)
+
+  expect(held.has('session:old-0')).toBe(false)
+  expect(held.has('session:old-1')).toBe(false)
+  expect(['session:old-2', 'session:old-3', 'session:old-4'].every(key => held.has(key))).toBe(
+    true,
+  )
+  expect(held.get('session:session-a')).toMatchObject({ record: { hasPerson: true } })
 })

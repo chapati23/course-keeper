@@ -113,8 +113,9 @@ function save($: $, id: string, record: CourseKeeperSession): Promise<void> {
  * Writes the session's record to the store. The oldest sessions are dropped
  * before the write, so a full store cannot block it. When the store refuses
  * the write (it holds at most 4 MiB of JSON text), the oldest other session
- * is dropped and the write is tried once more; each later refusal drops one
- * more, so the store shrinks until it takes the record. Never rejects.
+ * is dropped and the write is tried again. This repeats until the store
+ * takes the record or no other session is left; then the save is given up.
+ * Never rejects.
  */
 async function saveNow($: $, id: string, record: CourseKeeperSession) {
   const own = STORE_PREFIX + id
@@ -128,13 +129,18 @@ async function saveNow($: $, id: string, record: CourseKeeperSession) {
       for (const key of drop) await $.store.delete(key)
       others = others.filter(key => !drop.includes(key))
     }
-    try {
-      await $.store.set(own, value)
-    } catch {
-      const [oldest] = oldestKeys(await savedTimes($, others), others.length - 1)
-      if (oldest === undefined) return
-      await $.store.delete(oldest)
-      await $.store.set(own, value)
+    // Each refusal drops one other session, so this ends when none is left.
+    while (true) {
+      try {
+        await $.store.set(own, value)
+
+        return
+      } catch {
+        const [oldest] = oldestKeys(await savedTimes($, others), others.length - 1)
+        if (oldest === undefined) return
+        await $.store.delete(oldest)
+        others = others.filter(key => key !== oldest)
+      }
     }
   } catch {
     // The store failed: `$.state` still holds the record for this session.
@@ -269,13 +275,16 @@ async function runCheck(
   }
   // The fork sends the main thread's last request again. If the next turn
   // started during the waits above, that request is the next turn's, not
-  // the one this check is for: skip, and let the next turn's end check it.
-  // Nothing waits between these tests and the fork.
-  if (turn !== undefined && startedTurn !== undefined && startedTurn !== turn.turnId) {
+  // the one the ended turn answered. A check that a turn started skips, and
+  // the next turn's end checks it. One the person asked for runs without
+  // the ended turn's answer. Nothing waits between these tests and the fork.
+  const isOvertaken =
+    turn !== undefined && startedTurn !== undefined && startedTurn !== turn.turnId
+  if (trigger === 'turn' && isOvertaken) {
     return record($, id, 'did not run: the next turn started first')
   }
   const reply = await $.model.fork({
-    prompt: withFinalAnswer(prompt, turn?.answer ?? ''),
+    prompt: withFinalAnswer(prompt, isOvertaken ? '' : turn?.answer ?? ''),
   })
 
   if (!reply.isAnswered) {
@@ -343,6 +352,7 @@ async function notePrompt(
   if ((await readVision($)) === undefined) return
 
   const template = await readPrompt($, 'extract')
+  const { record: beforeCall } = await load($, id)
   const reply = await $.model.complete({
     model: 'haiku',
     prompt: fillExtractPrompt(template, text),
@@ -353,12 +363,17 @@ async function notePrompt(
 
   let added: string[] = []
   await change($, id, r => {
-    const done = addInstructions(r.instructions, candidates)
+    // `/course-keeper forget` during the call wins: an instruction withdrawn
+    // since then is neither added again nor taken off the withdrawn list.
+    // `removeWithdrawn(a, b)` is list a without the entries equal to one in b.
+    const since = removeWithdrawn(r.withdrawn ?? [], beforeCall.withdrawn ?? [])
+    const stated = removeWithdrawn(candidates, since)
+    const done = addInstructions(r.instructions, stated)
     added = done.added
     // An instruction the person states again is no longer withdrawn, also
     // when the list is full and it was not added.
     const before = r.withdrawn ?? []
-    const withdrawn = removeWithdrawn(before, candidates)
+    const withdrawn = removeWithdrawn(before, stated)
 
     return added.length === 0 && withdrawn.length === before.length
       ? r
