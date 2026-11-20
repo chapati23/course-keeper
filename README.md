@@ -54,14 +54,14 @@ Course keeper also notes standing instructions: goals or instructions you state 
 ## The command
 
 - `/course-keeper` shows whether a VISION.md was found, the standing instructions with their numbers, the alerts of this session with your answers, and the result of the last check.
-- `/course-keeper forget <n>` removes standing instruction n.
+- `/course-keeper forget <n>` removes standing instruction n. Later checks are told not to enforce it.
 - `/course-keeper check` runs a check now.
 - `/course-keeper off` and `/course-keeper on` switch the checks for this session. Standing instructions are still noted while checks are off.
 
 ## What is sent to the model, and when
 
 - **A check**, at the end of each main-agent turn that ends with an answer. Course keeper asks one question over a copy of the session: the session's own model gets the conversation as the main thread last sent it, plus the agent's final answer of the turn (the copy does not hold it yet) and the check prompt (`prompts/check.md`) with the text of VISION.md, the standing instructions and this session's alerts. The copy has no tools and gives one reply. At most one check runs at a time in a session.
-- **A standing-instruction check**, at each prompt you type that is not a slash command and has at least 12 characters. The `haiku` model gets `prompts/extract.md` and your whole prompt, and nothing else. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
+- **A standing-instruction check**, at each prompt you type that is not a slash command and has at least 12 characters. The `haiku` model gets `prompts/extract.md` and your whole prompt as it entered the session (after any other plugin changed or dropped it), and nothing else. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
 - **Tell the agent** sends the note to the agent only when you press the button.
 
 Course keeper keeps the standing instructions and alerts of the last 20 sessions in its store, a file under your Claude Code configuration directory. It sends them nowhere else.

@@ -7,11 +7,12 @@
 // prompt. The only event it changes is `session.compact`, where it adds to
 // the summarizer's instructions.
 
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, SessionRepo } from 'claude-code'
 
 import type { CourseKeeperAlert, CourseKeeperSession } from '../types'
 import {
   addInstructions,
+  addWithdrawn,
   addedNotice,
   answerCurrent,
   applyReply,
@@ -28,6 +29,7 @@ import {
   oldestKeys,
   parseCheckReply,
   parseExtractReply,
+  removeWithdrawn,
   restoreUnsent,
   shouldExtract,
   statusText,
@@ -96,14 +98,25 @@ async function savedTimes(
   )
 }
 
+// The saves of this copy of the module, one after another in the order they
+// were asked for, so an older snapshot never lands after a newer one.
+let saving: Promise<void> = Promise.resolve()
+
+/** Queues a write of the session's record to the store, after earlier ones. */
+function save($: $, id: string, record: CourseKeeperSession): Promise<void> {
+  saving = saving.then(() => saveNow($, id, record))
+
+  return saving
+}
+
 /**
  * Writes the session's record to the store. The oldest sessions are dropped
  * before the write, so a full store cannot block it. When the store refuses
  * the write (it holds at most 4 MiB of JSON text), the oldest other session
  * is dropped and the write is tried once more; each later refusal drops one
- * more, so the store shrinks until it takes the record.
+ * more, so the store shrinks until it takes the record. Never rejects.
  */
-async function save($: $, id: string, record: CourseKeeperSession) {
+async function saveNow($: $, id: string, record: CourseKeeperSession) {
   const own = STORE_PREFIX + id
   try {
     const value = { savedAt: await $.clock.now(), record }
@@ -142,7 +155,9 @@ async function change(
       ifVersion: version,
     })
     if (written.isSet) {
-      await save($, id, next)
+      // Not awaited: `$.state` holds the record now, and a slow store does
+      // not hold up this change or the saves queued after it.
+      void save($, id, next)
 
       return next
     }
@@ -154,28 +169,26 @@ async function readPrompt($: $, name: 'check' | 'extract'): Promise<string> {
   return stripLeadingComment(await $.fs.read(`${$.plugin.root}/prompts/${name}.md`))
 }
 
-/** VISION.md at the repository's main working tree, else the project root. */
+/**
+ * VISION.md at the repository's main working tree; at the project root only
+ * when the session is in no repository. When `repo()` fails, whether there
+ * is a repository is unknown, and there is no vision.
+ */
 async function readVision($: $): Promise<{ path: string; text: string } | undefined> {
-  const roots: string[] = []
+  let repo: SessionRepo | null
   try {
-    const repo = await $.session.repo()
-    if (repo !== null) roots.push(repo.root)
+    repo = await $.session.repo()
   } catch {
-    // No repository information: use the project root alone.
+    return undefined
   }
-  const root = await $.session.root()
-  if (!roots.includes(root)) roots.push(root)
-
-  for (const dir of roots) {
-    const path = `${dir.replace(/\/+$/, '')}/VISION.md`
-    try {
-      return { path, text: await $.fs.read(path) }
-    } catch {
-      // Missing or unreadable: try the next place.
-    }
+  const dir = repo === null ? await $.session.root() : repo.root
+  const path = `${dir.replace(/\/+$/, '')}/VISION.md`
+  try {
+    return { path, text: await $.fs.read(path) }
+  } catch {
+    // Missing or unreadable.
+    return undefined
   }
-
-  return undefined
 }
 
 async function record($: $, id: string, outcome: string): Promise<string> {
@@ -222,7 +235,7 @@ async function check($: $, trigger: 'turn' | 'command'): Promise<string> {
   if (isBusy) return record($, id, 'did not run: a check was already running')
 
   try {
-    return await runCheck($, id, turn)
+    return await runCheck($, id, trigger, turn, started)
   } catch {
     return record($, id, 'did not run: course keeper failed (a prompt file or a call)')
   } finally {
@@ -235,7 +248,9 @@ async function check($: $, trigger: 'turn' | 'command'): Promise<string> {
 async function runCheck(
   $: $,
   id: string,
+  trigger: 'turn' | 'command',
   turn: { turnId: string; answer: string } | undefined,
+  started: number,
 ): Promise<string> {
   const vision = await readVision($)
   if (vision === undefined) return record($, id, 'did not run: no VISION.md found')
@@ -244,13 +259,18 @@ async function runCheck(
   const { record: held } = await load($, id)
   const prompt = fillCheckPrompt(template, {
     vision: vision.text,
-    instructions: formatInstructions(held.instructions),
+    instructions: formatInstructions(held.instructions, held.withdrawn),
     alerts: formatAlerts(held),
   })
+  // `/course-keeper off` may have come during the waits above. A check that
+  // a turn started stops here; one the person asked for runs anyway.
+  if (trigger === 'turn' && held.isOff) {
+    return record($, id, 'did not run: checks are off')
+  }
   // The fork sends the main thread's last request again. If the next turn
   // started during the waits above, that request is the next turn's, not
   // the one this check is for: skip, and let the next turn's end check it.
-  // Nothing waits between this test and the fork.
+  // Nothing waits between these tests and the fork.
   if (turn !== undefined && startedTurn !== undefined && startedTurn !== turn.turnId) {
     return record($, id, 'did not run: the next turn started first')
   }
@@ -273,6 +293,15 @@ async function runCheck(
   let outcome = ''
   let shown: string | undefined
   await change($, id, r => {
+    // A check that took longer than CHECK_STALE_MS lost its in-flight mark,
+    // and a newer check may have started and shown its own alert since.
+    if (r.checkingSince !== started) {
+      const done = withOutcome(r, 'did not run: a newer check replaced this one', now)
+      outcome = done.outcome
+      shown = undefined
+
+      return done.record
+    }
     const done = applyReply(r, parsed, now)
     outcome = done.outcome
     shown = done.shown?.alert
@@ -318,7 +347,14 @@ async function notePrompt(
     const done = addInstructions(r.instructions, candidates)
     added = done.added
 
-    return added.length === 0 ? r : { ...r, instructions: done.list }
+    // An instruction the person states again is no longer withdrawn.
+    return added.length === 0
+      ? r
+      : {
+          ...r,
+          instructions: done.list,
+          withdrawn: removeWithdrawn(r.withdrawn ?? [], added),
+        }
   })
   if (added.length > 0) $.ui.toast(addedNotice(added))
 }
@@ -350,7 +386,14 @@ async function runCommand($: $, args: string): Promise<string> {
         const done = forgetInstruction(r.instructions, rest[0] ?? '')
         removed = done?.removed
 
-        return done === undefined ? r : { ...r, instructions: done.list }
+        // Kept, so the check is told not to enforce it from the conversation.
+        return done === undefined
+          ? r
+          : {
+              ...r,
+              instructions: done.list,
+              withdrawn: addWithdrawn(r.withdrawn ?? [], done.removed),
+            }
       })
 
       return removed === undefined
@@ -421,19 +464,25 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  on('prompt.submit', ($, e, next) => {
+  on('prompt.submit', async ($, e, next) => {
+    // The hooks beneath decide first: a prompt they drop starts nothing, and
+    // one they rewrite (a secret redacted, say) is read as it entered.
+    const entered = await next(e)
     try {
-      if (isPersonOrigin(e.origin.kind)) {
+      if (entered.drop === undefined && isPersonOrigin(e.origin.kind)) {
         // Not awaited: the prompt does not wait for course keeper.
-        void notePrompt($, e.text, e.command !== undefined, e.isMeta === true).catch(
-          () => undefined,
-        )
+        void notePrompt(
+          $,
+          entered.text,
+          e.command !== undefined,
+          e.isMeta === true,
+        ).catch(() => undefined)
       }
     } catch {
       // Ignore: course keeper never holds up a prompt.
     }
 
-    return next(e)
+    return entered
   }).catch(($, e, next) => next(e))
 
   on('turn.start', ($, e, next) => {
@@ -464,7 +513,10 @@ export const register: Register = on => {
       if (e.agentId === undefined) {
         const { record: held } = await load($, await $.session.id())
         const instructions = compactInstructions(e.instructions, held.instructions)
-        if (instructions !== undefined) passed = { ...e, instructions }
+        // Without a vision course keeper does nothing in the project.
+        if (instructions !== undefined && (await readVision($)) !== undefined) {
+          passed = { ...e, instructions }
+        }
       }
     } catch {
       passed = e

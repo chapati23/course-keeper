@@ -3,11 +3,13 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { CourseKeeperAlert, CourseKeeperSession } from '../types'
 import {
   CHECK_STALE_MS,
+  LIMITS,
   MAX_INSTRUCTIONS,
   MAX_INSTRUCTION_LENGTH,
   NO_ALERTS,
   NO_INSTRUCTIONS,
   addInstructions,
+  addWithdrawn,
   applyReply,
   clean,
   compactInstructions,
@@ -23,8 +25,10 @@ import {
   oldestKeys,
   parseCheckReply,
   parseExtractReply,
+  removeWithdrawn,
   restoreUnsent,
   shouldExtract,
+  statusText,
   stripLeadingComment,
   withFinalAnswer,
 } from './logic'
@@ -81,6 +85,44 @@ describe('the check reply', () => {
       parseCheckReply(DEVIATION.replace('reference: invariant 2', 'reference: rule 9')),
     ).toBeUndefined()
     expect(parseCheckReply(`${DEVIATION}\nverdict: none`)).toBeUndefined()
+  })
+
+  test('a reference without a number or a quoted instruction is malformed', () => {
+    for (const reference of [
+      'invariant',
+      'invariant two',
+      'invariant 2 and 3',
+      'invariants 2',
+      'instruction',
+      'instruction ""',
+      'instruction " "',
+      'instruction never push',
+      'instruction "never push',
+    ]) {
+      const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
+      expect([reference, parseCheckReply(reply)]).toEqual([reference, undefined])
+    }
+  })
+
+  test('invariant <number> and a quoted instruction are accepted', () => {
+    for (const reference of [
+      'INVARIANT 12',
+      'instruction "never push to main"',
+      'Instruction “never push to main”',
+    ]) {
+      const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
+      expect(parseCheckReply(reply)).toMatchObject({ verdict: 'deviation', reference })
+    }
+  })
+
+  test('a long quoted instruction is accepted, then cut', () => {
+    const words = 'w'.repeat(MAX_INSTRUCTION_LENGTH)
+    const reply = parseCheckReply(
+      DEVIATION.replace('reference: invariant 2', `reference: instruction "${words}"`),
+    )
+
+    if (reply?.verdict !== 'deviation') throw new Error('expected a deviation')
+    expect(Array.from(reply.reference).length).toBe(LIMITS.reference)
   })
 
   test('hostile text loses its escape sequences and control characters', () => {
@@ -169,7 +211,18 @@ describe('the check prompt', () => {
 
   test('empty lists use the fixed sentences', () => {
     expect(formatInstructions([])).toBe(NO_INSTRUCTIONS)
+    expect(formatInstructions([], [])).toBe(NO_INSTRUCTIONS)
     expect(formatAlerts(emptyRecord())).toBe(NO_ALERTS)
+  })
+
+  test('withdrawn instructions follow the list under their own line', () => {
+    expect(formatInstructions(['ask before deleting files'], ['never post without my yes'])).toBe(
+      '1. ask before deleting files\n\n' +
+        'Withdrawn by the person; do not enforce these:\n- never post without my yes',
+    )
+    expect(formatInstructions([], ['a', 'b'])).toBe(
+      `${NO_INSTRUCTIONS}\n\nWithdrawn by the person; do not enforce these:\n- a\n- b`,
+    )
   })
 
   test('a field that holds a placeholder is not filled twice', () => {
@@ -266,6 +319,31 @@ describe('the standing instructions', () => {
     expect(forgetInstruction(['a'], '0')).toBeUndefined()
     expect(forgetInstruction(['a'], '2')).toBeUndefined()
     expect(forgetInstruction(['a'], 'x')).toBeUndefined()
+  })
+
+  test('withdrawn instructions are cleaned, kept once, and only the newest 30 stay', () => {
+    expect(addWithdrawn(['a', 'b'], 'A')).toEqual(['b', 'A'])
+    expect(addWithdrawn([], 'keep \x1b[31mred\x1b[0m out')).toEqual(['keep red out'])
+    expect(Array.from(addWithdrawn([], 'y'.repeat(1000))[0] ?? '').length).toBe(
+      MAX_INSTRUCTION_LENGTH,
+    )
+    const full = Array.from({ length: MAX_INSTRUCTIONS }, (_, i) => `rule ${i}`)
+    const next = addWithdrawn(full, 'one more')
+    expect(next).toHaveLength(MAX_INSTRUCTIONS)
+    expect(next[0]).toBe('rule 1')
+    expect(next.at(-1)).toBe('one more')
+  })
+
+  test('an instruction stated again is no longer withdrawn', () => {
+    expect(removeWithdrawn(['Never post without my yes', 'b'], ['never  post without my YES'])).toEqual(['b'])
+  })
+
+  test('the status shows withdrawn instructions under their own heading', () => {
+    const text = statusText({ ...emptyRecord(), withdrawn: ['never post without my yes'] }, undefined)
+    expect(text).toContain(
+      'Withdrawn standing instructions:\n  - never post without my yes\n\nAlerts in this session:',
+    )
+    expect(statusText(emptyRecord(), undefined)).not.toContain('Withdrawn')
   })
 
   test('slash commands and short prompts are not sent', () => {
@@ -369,6 +447,8 @@ describe('stored records', () => {
       hasPerson: true,
       isOff: false,
       instructions: ['keep', 'red'],
+      // The record has no withdrawn list: it was written before there was one.
+      withdrawn: [],
       alerts: [alertOf({ answer: 'intended' })],
       current: alertOf(),
       showDetails: true,
@@ -376,6 +456,15 @@ describe('stored records', () => {
       checkingSince: null,
     })
     expect(normalizeRecord({ v: 1, checkingSince: 7 }).checkingSince).toBe(7)
+  })
+
+  test('withdrawn instructions are read cleaned, and only the newest 30', () => {
+    const many = Array.from({ length: MAX_INSTRUCTIONS + 2 }, (_, i) => `rule ${i}`)
+    const read = normalizeRecord({ v: 1, withdrawn: [7, '\x1b[31mred\x1b[0m', '', ...many] })
+
+    expect(read.withdrawn).toEqual(many.slice(-MAX_INSTRUCTIONS))
+    expect(normalizeRecord({ v: 1, withdrawn: ['a', 'red\x1b[0m'] }).withdrawn).toEqual(['a', 'red'])
+    expect(normalizeRecord({ v: 1, withdrawn: 'a' }).withdrawn).toEqual([])
   })
 
   test('an in-flight mark blocks a check until it is stale', () => {

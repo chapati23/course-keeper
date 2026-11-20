@@ -38,12 +38,18 @@ const BAND = {
 type Options = {
   /** False: the test answers `$.store` itself. */
   store?: boolean
-  /** The fork answers once this resolves. */
-  forkWait?: Promise<void>
+  /** The fork answers once this resolves; a function is asked per fork (1, 2, ...). */
+  forkWait?: Promise<void> | ((n: number) => Promise<void> | undefined)
   /** The check prompt file is read once this resolves. */
   readWait?: Promise<void>
   /** True: a prompt the plugin submits does not enter. */
   refuse?: () => boolean
+  /** What the hooks beneath do with a prompt that is not the plugin's. */
+  beneath?: (text: string) => { text: string } | { drop: string }
+  /** The project root; `/work/repo` when not given. */
+  root?: string
+  /** What `$.session.repo()` answers: a root, null (no repository) or a failure. */
+  repo?: () => string | null | 'fail'
 }
 
 /** The engine beneath the plugin, answered from memory. */
@@ -59,10 +65,15 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
 
   on('session.id', () => ({ value: 'session-a' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
-  on('session.root', () => ({ value: '/work/repo' }))
-  on('session.repo', () => ({
-    value: { root: '/work/repo', remote: null, internal: false, name: null },
-  }))
+  on('session.root', () => ({ value: options.root ?? '/work/repo' }))
+  on('session.repo', () => {
+    const root = options.repo === undefined ? '/work/repo' : options.repo()
+    if (root === 'fail') return { deny: 'git failed' }
+
+    return {
+      value: root === null ? null : { root, remote: null, internal: false, name: null },
+    }
+  })
   on('fs.read', async (_, e) => {
     if (e.path.endsWith('/prompts/check.md')) {
       await options.readWait
@@ -76,7 +87,8 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
   })
   on('model.fork', async (_, e) => {
     forks.push(e.prompt)
-    await options.forkWait
+    const wait = options.forkWait
+    await (typeof wait === 'function' ? wait(forks.length) : wait)
 
     return { value: { isAnswered: true, text: fork(), usage: USAGE } }
   })
@@ -89,9 +101,14 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
   on('ui.notify', () => ({ value: { isSent: false, reason: 'no-surface' } }))
   on('prompt.submit', (_, e) => {
     if (e.origin.kind === 'plugin' && options.refuse?.()) return { drop: 'a Stop stands' }
-    submitted.push({ text: e.text, origin: e.origin.kind })
+    const entered =
+      e.origin.kind === 'plugin' || options.beneath === undefined
+        ? { text: e.text }
+        : options.beneath(e.text)
+    if ('drop' in entered) return entered
+    submitted.push({ text: entered.text, origin: e.origin.kind })
 
-    return { text: e.text }
+    return entered
   })
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
@@ -120,15 +137,19 @@ async function settle(clock: { settle: () => Promise<void> }) {
   for (let i = 0; i < 20; i += 1) await clock.settle()
 }
 
-async function status($: Engine): Promise<string> {
+async function command($: Engine, args: string): Promise<string> {
   const { text } = await $.command.run({
     command: 'course-keeper',
-    args: '',
+    args,
     origin: { kind: 'composer' },
     presentation: { isFullscreen: false, columns: 80 },
   })
 
   return text ?? ''
+}
+
+async function status($: Engine): Promise<string> {
+  return command($, '')
 }
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -223,7 +244,7 @@ test('no check without a person, for a subagent, after an abort, or without VISI
 })
 
 test('a standing instruction is noted, kept through compaction, and forgotten', async ($, on) => {
-  const { clock, toasts } = world(
+  const { clock, toasts, forks } = world(
     on,
     () => 'verdict: none',
     '- never post to the tracker without my yes',
@@ -258,6 +279,93 @@ test('a standing instruction is noted, kept through compaction, and forgotten', 
     presentation: { isFullscreen: false, columns: 80 },
   })
   expect(text).toBe('Standing instruction 1 removed: "never post to the tracker without my yes"')
+
+  // The check is told not to enforce it, though the conversation still holds it.
+  expect(await status($)).toContain(
+    'Standing instructions:\n  none\n\n' +
+      'Withdrawn standing instructions:\n  - never post to the tracker without my yes\n\n' +
+      'Alerts in this session:',
+  )
+  await $.turn.complete(END)
+  await settle(clock)
+  expect(forks[0]).toContain(
+    'Instructions:\nNone listed. Use what the person said in this session.\n\n' +
+      'Withdrawn by the person; do not enforce these:\n' +
+      '- never post to the tracker without my yes\nAlerts:',
+  )
+})
+
+test('the status lists withdrawn instructions only when there are some', async ($, on) => {
+  world(on, () => 'verdict: none')
+
+  expect(await status($)).not.toContain('Withdrawn')
+})
+
+test('without VISION.md compaction passes its event on unchanged', async ($, on) => {
+  const { clock, files } = world(
+    on,
+    () => 'verdict: none',
+    '- never post to the tracker without my yes',
+  )
+  const seen: (string | undefined)[] = []
+  on('session.compact', (_, e) => {
+    seen.push(e.instructions)
+
+    return { messages: e.messages }
+  })
+
+  await personTypes($, 'never post to the tracker without my yes')
+  await settle(clock)
+  delete files['/work/repo/VISION.md']
+  await $.session.compact({
+    trigger: 'manual',
+    instructions: 'Focus on the plan.',
+    messages: [{ role: 'user', text: 'never post to the tracker without my yes', toolUses: [] }],
+  })
+
+  expect(seen).toEqual(['Focus on the plan.'])
+})
+
+test('the extract model gets the prompt as the hooks beneath let it enter, and no dropped prompt', async ($, on) => {
+  const { clock, forks, completions } = world(on, () => DEVIATION, 'none', {
+    beneath: text =>
+      text.startsWith('drop:')
+        ? { drop: 'refused beneath' }
+        : { text: text.replace('KEY-0000-EXAMPLE', '[redacted]') },
+  })
+
+  await personTypes($, 'drop: never post to the tracker without my yes')
+  await settle(clock)
+  expect(completions).toEqual([])
+  // A dropped prompt does not mark the session as having a person.
+  await $.turn.complete(END)
+  await settle(clock)
+  expect(forks).toHaveLength(0)
+
+  await personTypes($, 'never paste KEY-0000-EXAMPLE into the tracker')
+  await settle(clock)
+  expect(completions).toHaveLength(1)
+  expect(completions[0]).toContain('Message: never paste [redacted] into the tracker')
+  expect(completions[0]).not.toContain('KEY-0000-EXAMPLE')
+})
+
+test('VISION.md comes from the main working tree in a repository, from the project root only outside one', async ($, on) => {
+  let repo: string | null | 'fail' = '/work/repo'
+  const { files } = world(on, () => 'verdict: none', 'none', {
+    root: '/work/repo/app',
+    repo: () => repo,
+  })
+  delete files['/work/repo/VISION.md']
+  files['/work/repo/app/VISION.md'] = VISION
+
+  expect(await status($)).toContain('VISION.md: not found.')
+  repo = 'fail'
+  expect(await status($)).toContain('VISION.md: not found.')
+  repo = null
+  expect(await status($)).toContain('VISION.md: /work/repo/app/VISION.md')
+  files['/work/repo/VISION.md'] = VISION
+  repo = '/work/repo'
+  expect(await status($)).toContain('VISION.md: /work/repo/VISION.md')
 })
 
 test('without VISION.md a prompt is not sent for standing instructions', async ($, on) => {
@@ -423,4 +531,102 @@ test('a check whose turn the next turn overtook does not fork', async ($, on) =>
 
   expect(forks).toHaveLength(0)
   expect(await status($)).toContain('did not run: the next turn started first.')
+})
+
+test('the store keeps the newest record when an older save is slow', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock } = world(on, () => 'verdict: none', 'none', { store: false })
+  const held = new Map<string, unknown>()
+  let writes = 0
+  on('store.keys', () => ({ value: [...held.keys()] }))
+  on('store.get', (_, e) => ({ value: held.get(e.key) }))
+  on('store.delete', (_, e) => {
+    held.delete(e.key)
+
+    return { value: undefined }
+  })
+  on('store.set', async (_, e) => {
+    writes += 1
+    // The first write stalls until the test lets it through.
+    if (writes === 1) await gate
+    held.set(e.key, e.value)
+
+    return { value: undefined }
+  })
+
+  // First save: the session has a person. Second save: checks are off.
+  await personTypes($, 'ok')
+  await settle(clock)
+  expect(await command($, 'off')).toBe('Course keeper checks are off for this session.')
+  await settle(clock)
+  release()
+  await settle(clock)
+
+  expect(writes).toBe(2)
+  expect(held.get('session:session-a')).toMatchObject({
+    record: { hasPerson: true, isOff: true },
+  })
+})
+
+test('/course-keeper off during a check stops its fork; /course-keeper check still runs', async ($, on) => {
+  let release = () => {}
+  const readWait = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, forks } = world(on, () => 'verdict: none', 'none', { readWait })
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+  // The check waits for its prompt file while the person turns checks off.
+  await command($, 'off')
+  release()
+  await settle(clock)
+
+  expect(forks).toHaveLength(0)
+  expect(await status($)).toContain('did not run: checks are off.')
+  expect(await command($, 'check')).toBe('Check finished: verdict: none.')
+  expect(forks).toHaveLength(1)
+})
+
+test('a check that lost its in-flight mark does not replace a newer alert', async ($, on) => {
+  let release = () => {}
+  const firstFork = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const OLDER = DEVIATION.replace(
+    'alert: The session adds a price table to the client, which contradicts invariant 1.',
+    'alert: The session hard-codes a price in the client, which contradicts invariant 1.',
+  ).replace(
+    'evidence: "I will add a fallback price table in the client."',
+    'evidence: "I will hard-code the price in the client."',
+  )
+  // The newer check's fork answers first, the older one's last.
+  let replies = 0
+  const { clock, forks } = world(on, () => (++replies === 1 ? DEVIATION : OLDER), 'none', {
+    forkWait: n => (n === 1 ? firstFork : undefined),
+  })
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+  // The first check's mark goes stale, so the next turn's check runs.
+  await clock.advance(6 * 60 * 1000)
+  await $.turn.complete({ ...END, turnId: 'turn-2' })
+  await settle(clock)
+  expect(forks).toHaveLength(2)
+  release()
+  await settle(clock)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /contradicts invariant 1/ }))?.text).toBe(
+    'The session adds a price table to the client, which contradicts invariant 1.',
+  )
+  await ui.unmount()
+  expect(await status($)).toContain('did not run: a newer check replaced this one.')
 })

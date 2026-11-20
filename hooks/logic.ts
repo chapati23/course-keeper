@@ -134,11 +134,24 @@ export function fillExtractPrompt(template: string, message: string): string {
   return template.replace(/\{\{message\}\}/g, () => message)
 }
 
-/** The standing instructions as a numbered list, or the "none" sentence. */
-export function formatInstructions(list: readonly string[]): string {
-  return list.length === 0
-    ? NO_INSTRUCTIONS
-    : list.map((text, i) => `${i + 1}. ${text}`).join('\n')
+export const WITHDRAWN_HEADING = 'Withdrawn by the person; do not enforce these:'
+
+/**
+ * The standing instructions as a numbered list, or the "none" sentence;
+ * then, when there are any, the withdrawn instructions under their heading.
+ */
+export function formatInstructions(
+  list: readonly string[],
+  withdrawn: readonly string[] = [],
+): string {
+  const listed =
+    list.length === 0
+      ? NO_INSTRUCTIONS
+      : list.map((text, i) => `${i + 1}. ${text}`).join('\n')
+
+  return withdrawn.length === 0
+    ? listed
+    : `${listed}\n\n${WITHDRAWN_HEADING}\n${withdrawn.map(text => `- ${text}`).join('\n')}`
 }
 
 /** The alerts shown in the session with the person's answers, or "None.". */
@@ -178,10 +191,13 @@ export type CheckReply =
     }
 
 const FIELD = /^(verdict|reference|alert|evidence|note)\s*:\s*(.*)$/i
+/** `invariant <number>`, or `instruction "<text>"` in straight or curly quotes. */
+const REFERENCE = /^(?:invariant\s+\d+|instruction\s+["“].*\S.*["”])$/i
 
 /**
  * Reads a check reply. Returns undefined for a malformed reply: a field
- * given twice, an unknown verdict, or a deviation with a field missing.
+ * given twice, an unknown verdict, a deviation with a field missing, or a
+ * reference that is neither `invariant <number>` nor `instruction "<text>"`.
  */
 export function parseCheckReply(reply: string): CheckReply | undefined {
   const fields = new Map<string, string>()
@@ -214,7 +230,10 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
   if (verdict === 'none') return { verdict: 'none' }
   if (verdict !== 'deviation') return undefined
 
-  const reference = clean(fields.get('reference') ?? '', LIMITS.reference)
+  // The reference is tested whole, before it is cut: a long quote keeps
+  // its closing mark only before the cut.
+  const fullReference = clean(fields.get('reference') ?? '', Infinity)
+  const reference = clean(fullReference, LIMITS.reference)
   const alert = clean(fields.get('alert') ?? '', LIMITS.alert)
   const evidence = clean(
     unquote(fields.get('evidence') ?? ''),
@@ -222,7 +241,7 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
   )
   const note = clean(fields.get('note') ?? '', LIMITS.note)
 
-  if (!/^(invariant|instruction)\b/i.test(reference)) return undefined
+  if (!REFERENCE.test(fullReference)) return undefined
   if (alert === '' || evidence === '' || note === '') return undefined
 
   return { verdict: 'deviation', reference, alert, evidence, note }
@@ -420,6 +439,28 @@ export function forgetInstruction(
   return { list: list.filter((_, i) => i !== index), removed }
 }
 
+/**
+ * Adds a removed instruction to the withdrawn ones, newest last: an equal
+ * one moves to the end, and only the newest MAX_INSTRUCTIONS stay.
+ */
+export function addWithdrawn(
+  withdrawn: readonly string[],
+  removed: string,
+): string[] {
+  const text = clean(removed, MAX_INSTRUCTION_LENGTH)
+  if (text === '') return [...withdrawn]
+
+  return [...withdrawn.filter(have => !same(have, text)), text].slice(-MAX_INSTRUCTIONS)
+}
+
+/** The withdrawn instructions without those the person stated again. */
+export function removeWithdrawn(
+  withdrawn: readonly string[],
+  added: readonly string[],
+): string[] {
+  return withdrawn.filter(have => !added.some(text => same(have, text)))
+}
+
 /** The summarizer's instructions, with the standing instructions added. */
 export function compactInstructions(
   existing: string | undefined,
@@ -469,9 +510,16 @@ export function statusText(
     ...(record.instructions.length === 0
       ? ['  none']
       : record.instructions.map((text, i) => `  ${i + 1}. ${text}`)),
-    '',
-    'Alerts in this session:',
   ]
+  const withdrawn = record.withdrawn ?? []
+  if (withdrawn.length > 0) {
+    lines.push(
+      '',
+      'Withdrawn standing instructions:',
+      ...withdrawn.map(text => `  - ${text}`),
+    )
+  }
+  lines.push('', 'Alerts in this session:')
   const all = record.current ? [...record.alerts, record.current] : record.alerts
 
   lines.push(
@@ -507,6 +555,7 @@ export function emptyRecord(): CourseKeeperSession {
     hasPerson: false,
     isOff: false,
     instructions: [],
+    withdrawn: [],
     alerts: [],
     current: null,
     showDetails: false,
@@ -553,6 +602,16 @@ function readAlert(value: unknown): CourseKeeperAlert | undefined {
   }
 }
 
+/** The cleaned, non-empty texts of a stored list; none when it is not a list. */
+function readTexts(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((x): x is string => typeof x === 'string')
+        .map(x => clean(x, MAX_INSTRUCTION_LENGTH))
+        .filter(x => x !== '')
+    : []
+}
+
 /**
  * Reads a stored record, written by this version or an earlier one. Any
  * field that does not hold the expected shape takes its empty value.
@@ -561,13 +620,9 @@ export function normalizeRecord(value: unknown): CourseKeeperSession {
   const record = emptyRecord()
   if (!isObject(value) || value.v !== 1) return record
 
-  const instructions = Array.isArray(value.instructions)
-    ? value.instructions
-        .filter((x): x is string => typeof x === 'string')
-        .map(x => clean(x, MAX_INSTRUCTION_LENGTH))
-        .filter(x => x !== '')
-        .slice(0, MAX_INSTRUCTIONS)
-    : []
+  const instructions = readTexts(value.instructions).slice(0, MAX_INSTRUCTIONS)
+  // Absent in a record written before withdrawn instructions were kept.
+  const withdrawn = readTexts(value.withdrawn).slice(-MAX_INSTRUCTIONS)
   const alerts = Array.isArray(value.alerts)
     ? value.alerts
         .map(readAlert)
@@ -590,6 +645,7 @@ export function normalizeRecord(value: unknown): CourseKeeperSession {
     hasPerson: value.hasPerson === true,
     isOff: value.isOff === true,
     instructions,
+    withdrawn,
     alerts,
     current: current === null ? null : { ...current, answer: null },
     showDetails: value.showDetails === true && current !== null,

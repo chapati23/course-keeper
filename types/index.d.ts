@@ -41,6 +41,12 @@ export type CourseKeeperSession = {
   isOff: boolean
   /** The session's standing instructions, oldest first. */
   instructions: string[]
+  /**
+   * Standing instructions the person removed with `/course-keeper forget`,
+   * oldest first; the check is told not to enforce them. Absent in a record
+   * written before this field existed.
+   */
+  withdrawn?: string[]
   /** Alerts shown earlier in the session, with the person's answers. */
   alerts: CourseKeeperAlert[]
   /** The alert shown now, if any. */
