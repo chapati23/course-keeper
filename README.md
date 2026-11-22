@@ -22,6 +22,25 @@ A command-line tool that turns timesheets into invoices.
 Tracked drift: the old exporter still rounds amounts itself (invariant 1).
 ```
 
+### Name the act to avoid
+
+Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough.
+
+| Invariant | Text |
+| --- | --- |
+| General statement only | One module computes every amount. |
+| Names the act | One module computes every amount. Never round, convert or add up money in other code, not even for display. |
+
+This comes from replay tests on recorded sessions of one private project (November 2026). Each test took a recorded turn in which the agent deviated. It ran the check on that turn three times. It also let the agent write its reply again ten times, with the vision added to the agent's context.
+
+- In two such turns the vision held only a general statement. The check raised no alert in 3 of 3 tries, and the agent deviated again in 6 to 10 of 10 replies.
+- After one sentence named the act, the check raised an alert in 3 of 3 tries, and the agent deviated again in 0 to 2 of 10 replies.
+- A sentence stops the act that it names and no more. In one test, only 3 of 10 replies also did a related step that the sentence did not name.
+
+The check reads the text as written. A sentence that names too much can raise alerts on sound work, so state its scope in the sentence. The tests did not measure this.
+
+The tests are small. Each sentence was written after its author read the deviation it was tested on, and no sentence has been tested on a deviation it was not written for. The replays ran with every tool denied and without the agent's earlier thinking. Course keeper does not add VISION.md to the agent's context; it only checks the session against it.
+
 ## Install
 
 At the prompt of a terminal session:
