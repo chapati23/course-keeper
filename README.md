@@ -24,7 +24,7 @@ Tracked drift: the old exporter still rounds amounts itself (invariant 1).
 
 ### Name the act to avoid
 
-Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough.
+Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident.
 
 | Invariant | Text |
 | --- | --- |
@@ -37,9 +37,16 @@ This comes from replay tests on recorded sessions of one private project (Novemb
 - After one sentence named the act, the check raised an alert in 3 of 3 tries, and the agent deviated again in 0 to 2 of 10 replies.
 - A sentence stops the act that it names and no more. In one test, only 3 of 10 replies also did a related step that the sentence did not name.
 
+A later test tried sentences that were written from one-line summaries of four further deviations:
+
+- The check named the recorded act in two of the four turns, in one of them only in the note of an alert on another deviation. It missed the act in the other two.
+- Only one of the four deviations came back when the reply was written again. There the agent deviated again in 10 of 10 replies with the sentence in view. The replies used the label that the sentence asked for and kept the act that it did not name.
+- After that sentence was rewritten from the reply itself, the agent deviated again in 0 of 10 replies, and the check raised an alert in 3 of 3 tries.
+- A rewrite does not repair every miss. For one of the two turns that the check missed, the check raised no alert in 3 of 3 tries after the rewrite too.
+
 The check reads the text as written. A sentence that names too much can raise alerts on sound work, so state its scope in the sentence. The tests did not measure this.
 
-The tests are small. Each sentence was written after its author read the deviation it was tested on, and no sentence has been tested on a deviation it was not written for. The replays ran with every tool denied and without the agent's earlier thinking. Course keeper does not add VISION.md to the agent's context; it only checks the session against it.
+The tests are small. Every sentence that stopped a deviation was written after its author read that deviation. No test shows that such a sentence stops a different one. The replays ran with every tool denied and without the agent's earlier thinking. Course keeper does not add VISION.md to the agent's context; it only checks the session against it.
 
 ## Install
 
