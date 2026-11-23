@@ -1116,12 +1116,15 @@ describe('the case file', () => {
       isNew: false,
       inCases: true,
     })
-    // The vision has no invariant 9: the target stays 9.
+    // The vision has no invariant 9: the sentence is a new invariant of the vision.
     expect(addDraftSentence(VISION, CASES, 'invariant 9', 'Never guess.')).toMatchObject({
-      target: 9,
-      isNew: false,
-      inCases: true,
+      isNew: true,
+      inCases: false,
     })
+    // A heading with the number and no mark after it is the invariant's section.
+    expect(addCase('## 1 Pricing\n\n- Never C.\n\n## 10 Other\n', 1, 'Never B.')).toBe(
+      '## 1 Pricing\n\n- Never C.\n- Never B.\n\n## 10 Other\n',
+    )
   })
 
   test('a new invariant, or no case file, goes into the vision', () => {

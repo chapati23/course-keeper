@@ -1250,7 +1250,7 @@ const ANY_HEADING = /^#{1,6}(\s|$)/
 export function addCase(cases: string, n: number, sentence: string): string {
   const bullet = `- ${sentence}`
   const lines = cases.split('\n')
-  const own = new RegExp(`^#{1,6}\\s*${n}[.)](\\s|$)`)
+  const own = new RegExp(`^#{1,6}\\s*${n}(?:[.)]|\\s|$)`)
   const at = lines.findIndex(line => own.test(line))
   if (at < 0) {
     const kept = cases.replace(/\s+$/, '')
@@ -1278,8 +1278,11 @@ export function addDraftSentence(
   sentence: string,
 ): { text: string; target: number; isNew: boolean; inCases: boolean } {
   const wanted = /^invariant (\d+)$/.exec(place)
-  if (cases !== undefined && wanted) {
-    const target = Number(wanted[1])
+  const target = wanted ? Number(wanted[1]) : 0
+  // A number that the vision does not hold names no invariant: the sentence
+  // then goes the way of `addSentence`, as a new invariant.
+  const held = vision.split('\n').some(line => Number(ITEM.exec(line)?.[1]) === target)
+  if (cases !== undefined && wanted && held) {
 
     return {
       text: visionField(vision, addCase(cases, target, sentence)),
