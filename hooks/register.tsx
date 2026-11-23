@@ -28,13 +28,14 @@ import {
   earlierTurns,
   excerptCheckPrompt,
   failingRow,
+  failingTurnAt,
   fillCheckPrompt,
   fillExtractPrompt,
   fillLearnPrompt,
-  findQuote,
   forgetInstruction,
   formatAlerts,
   formatInstructions,
+  holdsQuote,
   isCheckRunning,
   isPersonOrigin,
   learnReport,
@@ -44,6 +45,7 @@ import {
   parseCheckReply,
   parseExtractReply,
   parseLearnReply,
+  personCountAt,
   removeWithdrawn,
   restoreUnsent,
   sessionExcerpt,
@@ -51,6 +53,7 @@ import {
   statusText,
   stripLeadingComments,
   turnOf,
+  untestedReport,
   withFinalAnswer,
   withOutcome,
   withoutDraft,
@@ -464,6 +467,7 @@ async function runCommand($: $, args: string): Promise<string> {
 
 const NO_DRAFT =
   'No draft sentence waits for an answer. Run /course-keeper learn first.'
+const REPLACED = 'A newer learn request replaced this one.'
 
 /**
  * `/course-keeper learn`: drafts one sentence for VISION.md from the agent's
@@ -508,8 +512,8 @@ async function learn($: $, words: string): Promise<string> {
 
   try {
     return verb === 'yes'
-      ? await testDraft($, id, vision.text)
-      : await makeDraft($, id, vision.text, words, turn)
+      ? await testDraft($, id, vision.text, started)
+      : await makeDraft($, id, vision.text, words, turn, started)
   } catch {
     return 'Course keeper could not finish the learn step: a prompt file or a call failed.'
   } finally {
@@ -526,6 +530,7 @@ async function makeDraft(
   vision: string,
   words: string,
   turn: { turnId: string; answer: string } | undefined,
+  started: number,
 ): Promise<string> {
   // A new request replaces a draft the person did not accept.
   await change($, id, withoutDraft)
@@ -557,12 +562,17 @@ async function makeDraft(
   }
   // The quote must stand word for word in one of the agent's replies, or
   // nothing of the draft is shown.
-  if (findQuote(await $.session.messages(), parsed.quote) < 0) {
+  const rows = await $.session.messages()
+  const at = failingRow(rows, parsed.quote)
+  if (at < 0) {
     return (
       "The draft quoted words that are not in the agent's replies, so it is not shown. " +
       `Run /course-keeper learn again, or give the act in words.\n${GIVE_WORDS}`
     )
   }
+  // The draft keeps the failing turn by its person message, so a later
+  // reply that repeats the quote does not move it.
+  const personCount = personCountAt(rows, turnOf(rows, at).start)
 
   let model = ''
   try {
@@ -570,11 +580,18 @@ async function makeDraft(
   } catch {
     // The report then names the session's model without its name.
   }
-  const draft = draftOf(parsed, await $.clock.now(), model)
-  await change($, id, r => ({ ...r, learn: draft }))
+  const draft = draftOf(parsed, await $.clock.now(), model, personCount)
+  // A request that took longer than CHECK_STALE_MS lost its in-flight mark,
+  // and a newer request may have saved its own draft since.
+  let isOwn = false
+  await change($, id, r => {
+    isOwn = r.learningSince === started
+
+    return isOwn ? { ...r, learn: draft } : r
+  })
   await saving
 
-  return draftText(draft)
+  return isOwn ? draftText(draft) : REPLACED
 }
 
 /**
@@ -582,24 +599,46 @@ async function makeDraft(
  * today's vision and with the sentence added. Each one is a separate call
  * on the session's model.
  */
-async function testDraft($: $, id: string, vision: string): Promise<string> {
+async function testDraft(
+  $: $,
+  id: string,
+  vision: string,
+  started: number,
+): Promise<string> {
   const { record: held } = await load($, id)
   const draft = held.learn
   if (draft === undefined) return NO_DRAFT
-  const drop = async () => {
-    await change($, id, r => (r.learn?.draftedAt === draft.draftedAt ? withoutDraft(r) : r))
+  // Drops the draft and answers `text`. A request that took longer than
+  // CHECK_STALE_MS lost its in-flight mark: a newer request owns the draft
+  // now, so this one changes nothing and says so.
+  const drop = async (text: string): Promise<string> => {
+    let isOwn = false
+    await change($, id, r => {
+      isOwn = r.learningSince === started
+
+      return isOwn && r.learn?.draftedAt === draft.draftedAt ? withoutDraft(r) : r
+    })
     await saving
+
+    return isOwn ? text : REPLACED
   }
 
+  // The turn that starts at the draft's person message, as the draft found it.
   const rows = await $.session.messages()
-  const at = failingRow(rows, draft.quote)
-  if (at < 0) {
-    await drop()
-
-    return (
+  const failing = failingTurnAt(rows, draft.personCount, draft.quote)
+  if (failing === undefined) {
+    return drop(
       'The turn you corrected is no longer in the session (a compaction can remove it). ' +
-      'The draft is dropped; nothing is kept.'
+        'The draft is dropped; nothing is kept.',
     )
+  }
+  const added = addSentence(vision, draft.place, draft.sentence)
+  // The excerpt leaves out the middle of a long turn. When the agent's words
+  // fall there, no check can see them, and no model is called.
+  if (!holdsQuote(sessionExcerpt(rows, failing), draft.quote)) {
+    const version = await pluginVersion($)
+
+    return drop(untestedReport({ draft, target: added.target, isNew: added.isNew, version }))
   }
 
   let model: string
@@ -615,7 +654,10 @@ async function testDraft($: $, id: string, vision: string): Promise<string> {
     readPrompt($, 'check'),
     readPrompt($, 'excerpt-head'),
   ])
-  const instructions = formatInstructions(held.instructions, held.withdrawn)
+  // No standing instructions: the list held now can hold one that the
+  // person's correction created. The person's messages in each excerpt
+  // show what was in force at that turn.
+  const instructions = formatInstructions([])
   const ask = async (turn: Turn, text: string): Promise<ExcerptResult> => {
     const prompt = excerptCheckPrompt(
       template,
@@ -638,15 +680,19 @@ async function testDraft($: $, id: string, vision: string): Promise<string> {
     }
   }
 
-  const failing = turnOf(rows, at)
+  // The vision covers the act only when today's check alerts on the
+  // invariant that the sentence would join. An alert on another invariant
+  // or an instruction is another matter of the same turn: the test goes on.
   const control = await ask(failing, vision)
-  if (control.kind === 'reply' && control.reply.verdict === 'deviation') {
-    await drop()
-
-    return coveredText(control.reply)
+  if (
+    control.kind === 'reply' &&
+    control.reply.verdict === 'deviation' &&
+    !added.isNew &&
+    alertsOn(control, added.target)
+  ) {
+    return drop(coveredText(control.reply))
   }
 
-  const added = addSentence(vision, draft.place, draft.sentence)
   const earlier = earlierTurns(rows, failing)
   const [verify, ...withSentence] = await Promise.all([
     ask(failing, added.text),
@@ -672,17 +718,18 @@ async function testDraft($: $, id: string, vision: string): Promise<string> {
   }
 
   const version = await pluginVersion($)
-  await drop()
 
-  return learnReport({
-    draft,
-    target: added.target,
-    isNew: added.isNew,
-    control,
-    verify: verify ?? { kind: 'no result', reason: 'the call failed' },
-    earlier: tested,
-    version,
-  })
+  return drop(
+    learnReport({
+      draft,
+      target: added.target,
+      isNew: added.isNew,
+      control,
+      verify: verify ?? { kind: 'no result', reason: 'the call failed' },
+      earlier: tested,
+      version,
+    }),
+  )
 }
 
 /** The plugin's version from its manifest, or undefined when it cannot be read. */

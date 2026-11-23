@@ -54,6 +54,14 @@ export type CourseKeeperDraft = {
   draftedAt: number
   /** The session's model when the draft was made, as `/model` shows it. */
   model: string
+  /**
+   * The number of person messages up to and including the first row of the
+   * failing turn; 0 for the rows before the first person message.
+   * `/course-keeper learn yes` tests the turn that starts at this person
+   * message, so a later reply that repeats the quote does not move the turn.
+   * A stored draft without a whole number here of 0 or more is dropped.
+   */
+  personCount: number
 }
 
 /** Everything course keeper keeps for one session. */

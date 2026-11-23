@@ -23,6 +23,7 @@ import {
   emptyRecord,
   excerptCheckPrompt,
   failingRow,
+  failingTurnAt,
   fillCheckPrompt,
   fillExtractPrompt,
   fillLearnPrompt,
@@ -30,6 +31,7 @@ import {
   forgetInstruction,
   formatAlerts,
   formatInstructions,
+  holdsQuote,
   isCheckRunning,
   isPersonMessage,
   isPersonOrigin,
@@ -39,6 +41,7 @@ import {
   parseCheckReply,
   parseExtractReply,
   parseLearnReply,
+  personCountAt,
   removeWithdrawn,
   restoreUnsent,
   sessionExcerpt,
@@ -48,6 +51,7 @@ import {
   stripLeadingComments,
   turnOf,
   turnsOf,
+  untestedReport,
   withFinalAnswer,
   withoutDraft,
 } from './logic'
@@ -547,6 +551,7 @@ function draftOf(fields: Partial<CourseKeeperDraft> = {}): CourseKeeperDraft {
     allowed: 'Formatting an amount that the module computed.',
     draftedAt: Date.UTC(2026, 10, 23, 12),
     model: 'example-model',
+    personCount: 2,
     ...fields,
   }
 }
@@ -719,6 +724,36 @@ describe('the quote test', () => {
     expect(failingRow(corrected, 'I will restore them.')).toBe(3)
     expect(failingRow(corrected, 'Other words.')).toBe(-1)
     expect(failingRow(corrected, ' ')).toBe(-1)
+  })
+
+  test('the failing turn is kept by its person message, so a later repeat does not move it', () => {
+    const later = [
+      row('assistant', 'Hello.'),
+      row('user', 'Fix the build.'),
+      row('assistant', 'I will delete the failing tests.'),
+      row('user', 'No, never delete tests.'),
+      row('assistant', 'You are right.'),
+      row('user', 'What did you say?'),
+      row('assistant', 'I said: I will delete the failing tests.'),
+      row('user', 'Go on.'),
+    ]
+    expect(personCountAt(later, 0)).toBe(0)
+    expect(personCountAt(later, 1)).toBe(1)
+    expect(personCountAt(later, 5)).toBe(3)
+    // The rule of the draft picks the repeat; the stored number does not.
+    expect(failingRow(later, 'I will delete the failing tests.')).toBe(6)
+    expect(failingTurnAt(later, 1, 'I will delete the failing tests.')).toEqual({ start: 1, end: 2 })
+    expect(failingTurnAt(later, 0, 'Hello.')).toEqual({ start: 0, end: 0 })
+    // The turn at that person message no longer holds the quote, or is gone.
+    expect(failingTurnAt(later, 2, 'I will delete the failing tests.')).toBeUndefined()
+    expect(failingTurnAt(later, 9, 'I will delete the failing tests.')).toBeUndefined()
+    expect(failingTurnAt(later.slice(1), 0, 'Hello.')).toBeUndefined()
+  })
+
+  test('holdsQuote collapses whitespace and nothing else', () => {
+    expect(holdsQuote('AGENT: I will round\n  the total.', 'round the total')).toBe(true)
+    expect(holdsQuote('AGENT: I will round the total.', 'Round the total')).toBe(false)
+    expect(holdsQuote('AGENT: text', ' ')).toBe(false)
   })
 })
 
@@ -1039,6 +1074,20 @@ describe('the learn answers', () => {
     expect(report({ control: { kind: 'no result', reason: 'the call failed' } })).toContain(
       "Check with today's vision on the turn you corrected: no result (the call failed).",
     )
+    // Today's check alerts elsewhere on the turn: another matter, one line.
+    expect(
+      report({
+        control: {
+          kind: 'reply',
+          reply: { verdict: 'deviation', reference: 'instruction "no new files"', alert: 'a', evidence: 'e', note: 'n' },
+        },
+      }),
+    ).toContain(
+      'as a new invariant:\n  Never round, convert or add up money outside the one module, for example the exporter total: call the module instead.\n\n' +
+        'With today\'s vision the check alerts on this turn on instruction "no new files", another matter: "a".\n' +
+        'Test on the turn you corrected:',
+    )
+    expect(plain).not.toContain('another matter')
     expect(
       report({ earlier: { tested: 3, newAlerts: ['x', 'y'], noResults: ['the call failed'] } }),
     ).toContain(
@@ -1054,6 +1103,29 @@ describe('the learn answers', () => {
       'Test on 2 earlier turns of this session: no new alert. No result on 1 of them (a).',
     )
   })
+
+  test('the answer for a turn too long for the test shows the sentence as not tested', () => {
+    expect(untestedReport({ draft: draftOf(), target: 1, isNew: false, version: '0.1.0' })).toBe(
+      [
+        "The turn you corrected is too long for the test. The agent's words fall in the part that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.",
+        '',
+        'Draft sentence for VISION.md, invariant 1 (not tested):',
+        '  Never round, convert or add up money outside the one module, for example the exporter total: call the module instead.',
+        'Must stay allowed: Formatting an amount that the module computed.',
+        '',
+        'Where it comes from: the agent\'s words "I will round the total in the exporter before it writes the file."; drafted 2026-11-23 UTC by example-model; course keeper 0.1.0.',
+        '',
+        'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+        '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
+        '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
+        '  too broad and 4 too narrow.',
+        '- Whether an agent that reads the sentence avoids the act is not measured.',
+      ].join('\n'),
+    )
+    expect(
+      untestedReport({ draft: draftOf({ allowed: '' }), target: 4, isNew: true }),
+    ).toContain('as a new invariant (not tested):\n  Never round')
+  })
 })
 
 describe('the pending draft in the record', () => {
@@ -1063,6 +1135,7 @@ describe('the pending draft in the record', () => {
     expect('learningSince' in normalizeRecord({ v: 1 })).toBe(false)
     expect(normalizeRecord({ v: 1, learningSince: 5 }).learningSince).toBe(5)
     expect(normalizeRecord({ v: 1, learn: draftOf({ act: 'a\x1b[31mct' }) }).learn?.act).toBe('act')
+    expect(normalizeRecord({ v: 1, learn: draftOf({ personCount: 0 }) }).learn?.personCount).toBe(0)
   })
 
   test('a draft of another shape is dropped', () => {
@@ -1073,6 +1146,11 @@ describe('the pending draft in the record', () => {
       { ...draftOf(), quote: '' },
       { ...draftOf(), draftedAt: 'now' },
       { ...draftOf(), model: 7 },
+      // Written before the draft kept its turn, or of another shape.
+      { ...draftOf(), personCount: undefined },
+      { ...draftOf(), personCount: -1 },
+      { ...draftOf(), personCount: 1.5 },
+      { ...draftOf(), personCount: '2' },
     ]) {
       expect('learn' in normalizeRecord({ v: 1, learn: bad })).toBe(false)
     }

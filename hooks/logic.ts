@@ -866,16 +866,21 @@ function collapse(text: string): string {
 }
 
 /**
+ * True when the text holds the quote word for word, with runs of whitespace
+ * counted as one space. An empty quote is in no text.
+ */
+export function holdsQuote(text: string, quote: string): boolean {
+  const wanted = collapse(quote)
+
+  return wanted !== '' && collapse(text).includes(wanted)
+}
+
+/**
  * The index of the last assistant row whose text holds the quote word for
  * word, with runs of whitespace counted as one space; -1 when none does.
  */
 export function findQuote(rows: readonly SessionMessage[], quote: string): number {
-  const wanted = collapse(quote)
-  if (wanted === '') return -1
-
-  return rows.findLastIndex(
-    row => row.role === 'assistant' && collapse(row.text).includes(wanted),
-  )
+  return rows.findLastIndex(row => row.role === 'assistant' && holdsQuote(row.text, quote))
 }
 
 /**
@@ -949,6 +954,36 @@ export function turnOf(rows: readonly SessionMessage[], i: number): Turn {
   return (
     turnsOf(rows).find(turn => turn.start <= i && i <= turn.end) ?? { start: i, end: i }
   )
+}
+
+/** How many person messages the rows hold up to and including row `start`. */
+export function personCountAt(rows: readonly SessionMessage[], start: number): number {
+  let count = 0
+  for (let k = 0; k <= start && k < rows.length; k += 1) {
+    if (isPersonMessage(rows[k], rows[k - 1])) count += 1
+  }
+
+  return count
+}
+
+/**
+ * The turn that starts at person message number `personCount` (0: the rows
+ * before the first person message), when one of its assistant rows holds the
+ * quote; undefined otherwise. A draft stores the number, so a later reply
+ * that repeats the quote does not move the failing turn.
+ */
+export function failingTurnAt(
+  rows: readonly SessionMessage[],
+  personCount: number,
+  quote: string,
+): Turn | undefined {
+  const turn = turnsOf(rows).find(t => personCountAt(rows, t.start) === personCount)
+  if (turn === undefined) return undefined
+  const holds = rows
+    .slice(turn.start, turn.end + 1)
+    .some(row => row.role === 'assistant' && holdsQuote(row.text, quote))
+
+  return holds ? turn : undefined
 }
 
 /**
@@ -1158,21 +1193,35 @@ export function draftOf(
   reply: Extract<LearnReply, { result: 'draft' }>,
   draftedAt: number,
   model: string,
+  personCount: number,
 ): CourseKeeperDraft {
   const { result: _, ...fields } = reply
 
-  return { ...fields, draftedAt, model: clean(model, 100) }
+  return { ...fields, draftedAt, model: clean(model, 100), personCount }
 }
 
 function readDraft(value: unknown): CourseKeeperDraft | undefined {
   if (!isObject(value)) return undefined
-  const { quote, act, forms, variant, place, sentence, allowed, draftedAt, model } =
-    value
+  const {
+    quote,
+    act,
+    forms,
+    variant,
+    place,
+    sentence,
+    allowed,
+    draftedAt,
+    model,
+    personCount,
+  } = value
   const texts = [quote, act, forms, variant, place, sentence, allowed, model]
   if (
     !texts.every(text => typeof text === 'string') ||
     typeof draftedAt !== 'number' ||
-    !Number.isFinite(draftedAt)
+    !Number.isFinite(draftedAt) ||
+    typeof personCount !== 'number' ||
+    !Number.isInteger(personCount) ||
+    personCount < 0
   ) {
     return undefined
   }
@@ -1186,6 +1235,7 @@ function readDraft(value: unknown): CourseKeeperDraft | undefined {
     allowed: clean(allowed as string, LEARN_LIMITS.allowed),
     draftedAt,
     model: clean(model as string, 100),
+    personCount,
   }
   const { place: placed } = read
   if (
@@ -1224,12 +1274,18 @@ export function draftText(draft: CourseKeeperDraft): string {
   ].join('\n')
 }
 
-/** The answer when the control check already alerts on the corrected turn. */
+/**
+ * The answer when the control check already alerts on the corrected turn, on
+ * the invariant that the draft's sentence would join. The alert can be about
+ * another matter of the same turn, so the person decides.
+ */
 export function coveredText(reply: Extract<CheckReply, { verdict: 'deviation' }>): string {
   return (
     'The check already alerts on the turn you corrected with today\'s vision ' +
     `(${reply.reference}): ${reply.alert} Evidence: "${reply.evidence}". ` +
-    'The vision covers the act, so no sentence is offered. The draft is dropped.'
+    'If this alert is about the act you corrected, the vision already covers the act, ' +
+    'so no sentence is offered. If the alert is about another matter, run ' +
+    '/course-keeper learn <the act in words> again. The draft is dropped.'
   )
 }
 
@@ -1280,32 +1336,13 @@ function earlierLine(earlier: EarlierTest): string {
   return `${start}no new alert.${missing}`
 }
 
-/** The answer to `/course-keeper learn yes` once the tests ran. */
-export function learnReport(input: {
-  draft: CourseKeeperDraft
-  target: number
-  isNew: boolean
-  control: ExcerptResult
-  verify: ExcerptResult
-  earlier: EarlierTest
-  version?: string
-}): string {
-  const { draft, target, isNew, control, verify, earlier, version } = input
-  const lines = [
-    `Draft sentence for VISION.md, ${isNew ? 'as a new invariant' : `invariant ${target}`}:`,
-    `  ${draft.sentence}`,
-    '',
-  ]
-  if (control.kind === 'no result') {
-    lines.push(
-      `Check with today's vision on the turn you corrected: no result (${control.reason}).`,
-    )
-  }
-  lines.push(
-    `Test on the turn you corrected: ${verifyLine(verify, target)}`,
-    earlierLine(earlier),
-  )
-  if (draft.allowed !== '') lines.push(`Must stay allowed: ${draft.allowed}`)
+function placeText(target: number, isNew: boolean): string {
+  return isNew ? 'as a new invariant' : `invariant ${target}`
+}
+
+/** The lines that close a report: what the draft allows, its source, the notes. */
+function closingLines(draft: CourseKeeperDraft, version: string | undefined): string[] {
+  const lines = draft.allowed === '' ? [] : [`Must stay allowed: ${draft.allowed}`]
   const date = new Date(draft.draftedAt).toISOString().slice(0, 10)
   lines.push(
     '',
@@ -1320,5 +1357,63 @@ export function learnReport(input: {
     '- Whether an agent that reads the sentence avoids the act is not measured.',
   )
 
+  return lines
+}
+
+/** The answer to `/course-keeper learn yes` once the tests ran. */
+export function learnReport(input: {
+  draft: CourseKeeperDraft
+  target: number
+  isNew: boolean
+  control: ExcerptResult
+  verify: ExcerptResult
+  earlier: EarlierTest
+  version?: string
+}): string {
+  const { draft, target, isNew, control, verify, earlier, version } = input
+  const lines = [
+    `Draft sentence for VISION.md, ${placeText(target, isNew)}:`,
+    `  ${draft.sentence}`,
+    '',
+  ]
+  if (control.kind === 'no result') {
+    lines.push(
+      `Check with today's vision on the turn you corrected: no result (${control.reason}).`,
+    )
+  } else if (control.reply.verdict === 'deviation') {
+    // The control alerts, but not where the sentence goes: another matter.
+    lines.push(
+      `With today's vision the check alerts on this turn on ${control.reply.reference}, ` +
+        `another matter: "${control.reply.alert}".`,
+    )
+  }
+  lines.push(
+    `Test on the turn you corrected: ${verifyLine(verify, target)}`,
+    earlierLine(earlier),
+    ...closingLines(draft, version),
+  )
+
   return lines.join('\n')
+}
+
+/**
+ * The answer when the corrected turn is too long for the test: the excerpt
+ * leaves out the middle of the turn, and the agent's words fall there.
+ */
+export function untestedReport(input: {
+  draft: CourseKeeperDraft
+  target: number
+  isNew: boolean
+  version?: string
+}): string {
+  const { draft, target, isNew, version } = input
+
+  return [
+    'The turn you corrected is too long for the test. The agent\'s words fall in the part ' +
+      'that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.',
+    '',
+    `Draft sentence for VISION.md, ${placeText(target, isNew)} (not tested):`,
+    `  ${draft.sentence}`,
+    ...closingLines(draft, version),
+  ].join('\n')
 }
