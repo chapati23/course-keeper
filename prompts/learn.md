@@ -1,18 +1,8 @@
 <!--
 The learn prompt. The plugin appends it as one user message to a copy of the session (a fork),
 with the two {{...}} fields filled in, when the person runs /course-keeper learn. The plugin removes
-this comment and the comment below it before it sends the prompt.
+this comment before it sends the prompt.
 Version v1, measured on 2026-11-23 on 8 recorded catches. Change it only together with an eval run.
--->
-
-<!--
-The draft prompt of "learn from a catch". A plugin command would append it as one user message to a copy
-of the session (a fork), with the two {{...}} fields filled in. The copy has no tools and gives one reply.
-DRAFT v1, 2026-11-23: v0 with three changes after the learn-1 run. (1) The reply "covered" is gone: a separate
-check decides whether the vision already covers the act. (2) The sentence names the move in nouns for the kind
-of thing and gives the recorded instance as an example; the drafter writes a variant first and tests the sentence
-on it. (3) The sentence covers each form the act can take. Two reviewers read a first version of v1; their
-confirmed findings are applied. It holds no project content.
 -->
 
 <system-reminder>
