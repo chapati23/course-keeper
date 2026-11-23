@@ -208,14 +208,14 @@ async function readPrompt(
 type Vision = {
   path: string
   text: string
-  /** VISION-CASES.md beside VISION.md, when it exists and can be read. */
-  cases?: { path: string; text: string }
+  /** ANTI-PATTERNS.md beside VISION.md, when it exists and can be read. */
+  antiPatterns?: { path: string; text: string }
 }
 
 /**
  * VISION.md at the repository's main working tree; at the project root only
  * when the session is in no repository. When `repo()` fails, whether there
- * is a repository is unknown, and there is no vision. VISION-CASES.md in the
+ * is a repository is unknown, and there is no vision. ANTI-PATTERNS.md in the
  * same directory is read too; without VISION.md it is not used.
  */
 async function readVision($: $): Promise<Vision | undefined> {
@@ -234,18 +234,18 @@ async function readVision($: $): Promise<Vision | undefined> {
     // Missing or unreadable.
     return undefined
   }
-  const casesPath = `${dir}/VISION-CASES.md`
+  const antiPatternsPath = `${dir}/ANTI-PATTERNS.md`
   try {
-    return { path, text, cases: { path: casesPath, text: await $.fs.read(casesPath) } }
+    return { path, text, antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsPath) } }
   } catch {
-    // No case file, or an unreadable one: the vision alone.
+    // No anti-patterns file, or an unreadable one: the vision alone.
     return { path, text }
   }
 }
 
 /** The text that fills the `{{vision}}` field of a prompt. */
 function fieldOf(vision: Vision): string {
-  return visionField(vision.text, vision.cases?.text)
+  return visionField(vision.text, vision.antiPatterns?.text)
 }
 
 async function record($: $, id: string, outcome: string): Promise<string> {
@@ -442,7 +442,7 @@ async function runCommand($: $, args: string): Promise<string> {
       const vision = await readVision($)
       const { record: held } = await load($, id)
 
-      return statusText(held, vision?.path, vision?.cases?.path)
+      return statusText(held, vision?.path, vision?.antiPatterns?.path)
     }
     case 'check':
       return `Check finished: ${await check($, 'command')}.`
@@ -652,7 +652,7 @@ async function testDraft(
   read: Vision,
   started: number,
 ): Promise<string> {
-  // Today's vision as the prompts get it, with the case file when there is one.
+  // Today's vision as the prompts get it, with the anti-patterns file when there is one.
   const vision = fieldOf(read)
   const { record: held } = await load($, id)
   const draft = held.learn
@@ -681,7 +681,7 @@ async function testDraft(
         'The draft is dropped; nothing is kept.',
     )
   }
-  const added = addDraftSentence(read.text, read.cases?.text, draft.place, draft.sentence)
+  const added = addDraftSentence(read.text, read.antiPatterns?.text, draft.place, draft.sentence)
   // The excerpt leaves out the middle of a long turn. When the agent's words
   // fall there, no check can see them, and no model is called. Only the
   // agent's rows count: the person can repeat the words in a message.
@@ -693,7 +693,7 @@ async function testDraft(
         draft,
         target: added.target,
         isNew: added.isNew,
-        inCases: added.inCases,
+        inAntiPatterns: added.inAntiPatterns,
         version,
       }),
     )
@@ -789,7 +789,7 @@ async function testDraft(
       verify: verify ?? { kind: 'no result', reason: 'the call failed' },
       earlier: tested,
       version,
-      inCases: added.inCases,
+      inAntiPatterns: added.inAntiPatterns,
     }),
   )
 }

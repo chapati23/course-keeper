@@ -1065,14 +1065,14 @@ test('learn yes stops when the check already alerts on the turn with today\'s vi
   expect(await command($, 'learn yes')).toBe(NO_DRAFT)
 })
 
-const CASES = '# Cases\n\n## 1. One service sets every price\n\n- Never compute a discount in the client.\n'
+const ANTI_PATTERNS = '# Anti-patterns\n\n## 1. One service sets every price\n\n- Never compute a discount in the client.\n'
 
-test('the case file beside VISION.md goes into the check and the status', async ($, on) => {
+test('the anti-patterns file beside VISION.md goes into the check and the status', async ($, on) => {
   const { clock, forks, files } = world(on, () => 'verdict: none')
-  files['/work/repo/VISION-CASES.md'] = CASES
+  files['/work/repo/ANTI-PATTERNS.md'] = ANTI_PATTERNS
 
   expect(await status($)).toContain(
-    'VISION.md: /work/repo/VISION.md\nVISION-CASES.md: /work/repo/VISION-CASES.md\n',
+    'VISION.md: /work/repo/VISION.md\nANTI-PATTERNS.md: /work/repo/ANTI-PATTERNS.md\n',
   )
   await personTypes($, 'ok')
   await settle(clock)
@@ -1080,21 +1080,21 @@ test('the case file beside VISION.md goes into the check and the status', async 
   await settle(clock)
   expect(forks[0]).toContain(
     'Vision:\n# Example\n\n1. One service sets every price.\n\n' +
-      '# Cases: acts that break the invariants above\n',
+      '# Anti-patterns: acts that break the invariants above\n',
   )
-  expect(forks[0]).toContain(`invariant.\n\n${CASES}\nInstructions:`)
+  expect(forks[0]).toContain(`invariant.\n\n${ANTI_PATTERNS}\nInstructions:`)
 
-  // Without VISION.md the case file alone runs nothing.
+  // Without VISION.md the anti-patterns file alone runs nothing.
   delete files['/work/repo/VISION.md']
   const shown = await status($)
   expect(shown).toContain('VISION.md: not found.')
-  expect(shown).not.toContain('VISION-CASES.md')
+  expect(shown).not.toContain('ANTI-PATTERNS.md')
   await $.turn.complete({ ...END, turnId: 'turn-2' })
   await settle(clock)
   expect(forks).toHaveLength(1)
 })
 
-test('with a case file, a sentence for an invariant is tested in the case file', async ($, on) => {
+test('with an anti-patterns file, a sentence for an invariant is tested in the anti-patterns file', async ($, on) => {
   let reply = DRAFT
   const { forks, files, completions } = world(
     on,
@@ -1107,19 +1107,19 @@ test('with a case file, a sentence for an invariant is tested in the case file',
       }),
     },
   )
-  files['/work/repo/VISION-CASES.md'] = CASES
+  files['/work/repo/ANTI-PATTERNS.md'] = ANTI_PATTERNS
 
   await command($, 'learn')
-  expect(forks[0]).toContain(`Vision to learn: # Example\n\n1. One service sets every price.\n\n# Cases:`)
-  expect(forks[0]).toContain(CASES)
+  expect(forks[0]).toContain(`Vision to learn: # Example\n\n1. One service sets every price.\n\n# Anti-patterns:`)
+  expect(forks[0]).toContain(ANTI_PATTERNS)
   const report = await command($, 'learn yes')
-  expect(report).toContain(`Draft sentence for VISION-CASES.md, under invariant 1:\n  ${SENTENCE}\n`)
+  expect(report).toContain(`Draft sentence for ANTI-PATTERNS.md, under invariant 1:\n  ${SENTENCE}\n`)
   expect(report).toContain(
-    'This is a draft for the owners of VISION-CASES.md and VISION.md. Course keeper does not change the files.',
+    'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course keeper does not change the files.',
   )
   const verify = completions.find(p => p.includes(SENTENCE))
   expect(verify).toContain(
-    'Vision:\n# Example\n\n1. One service sets every price.\n\n# Cases:',
+    'Vision:\n# Example\n\n1. One service sets every price.\n\n# Anti-patterns:',
   )
   expect(verify).toContain(`- Never compute a discount in the client.\n- ${SENTENCE}\n`)
 
@@ -1129,7 +1129,7 @@ test('with a case file, a sentence for an invariant is tested in the case file',
   const again = await command($, 'learn yes')
   expect(again).toContain('Draft sentence for VISION.md, as a new invariant:')
   expect(again).toContain('This is a draft for the owners of VISION.md. Course keeper does not change the file.')
-  expect(completions.at(-1)).toContain(`2. ${SENTENCE}\n\n# Cases:`)
+  expect(completions.at(-1)).toContain(`2. ${SENTENCE}\n\n# Anti-patterns:`)
 })
 
 test('cancel drops the draft', async ($, on) => {

@@ -540,13 +540,13 @@ function time(ms: number): string {
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
-  casesPath?: string,
+  antiPatternsPath?: string,
 ): string {
   const lines = [
     visionPath === undefined
       ? 'VISION.md: not found. No checks run without it.'
       : `VISION.md: ${visionPath}`,
-    ...(casesPath === undefined ? [] : [`VISION-CASES.md: ${casesPath}`]),
+    ...(antiPatternsPath === undefined ? [] : [`ANTI-PATTERNS.md: ${antiPatternsPath}`]),
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',
@@ -1223,37 +1223,37 @@ export function addSentence(
   }
 }
 
-export const CASES_HEADING = '# Cases: acts that break the invariants above'
-export const CASES_NOTE =
+export const ANTI_PATTERNS_HEADING = '# Anti-patterns: acts that break the invariants above'
+export const ANTI_PATTERNS_NOTE =
   'The number of each section below is the number of the invariant it belongs to, ' +
   'and an act named in a section is a deviation from that invariant.'
 
 /**
  * The text that fills the `{{vision}}` field of every prompt: the vision,
- * then the case file under its own heading. Without a case file, or with an
+ * then the anti-patterns file under its own heading. Without an anti-patterns file, or with an
  * empty one, it is the vision unchanged.
  */
-export function visionField(vision: string, cases: string | undefined): string {
-  if (cases === undefined || cases.trim() === '') return vision
+export function visionField(vision: string, antiPatterns: string | undefined): string {
+  if (antiPatterns === undefined || antiPatterns.trim() === '') return vision
 
-  return `${vision.replace(/\s+$/, '')}\n\n${CASES_HEADING}\n${CASES_NOTE}\n\n${cases}`
+  return `${vision.replace(/\s+$/, '')}\n\n${ANTI_PATTERNS_HEADING}\n${ANTI_PATTERNS_NOTE}\n\n${antiPatterns}`
 }
 
 const ANY_HEADING = /^#{1,6}(\s|$)/
 
 /**
- * The case text with the sentence added as a bullet at the end of the
+ * The anti-patterns text with the sentence added as a bullet at the end of the
  * section of invariant n: from its heading to the line before the next
  * heading, or to the end. Trailing blank lines stay after the bullet. When
- * the case text has no such section, a new section `## n.` is appended.
+ * the anti-patterns text has no such section, a new section `## n.` is appended.
  */
-export function addCase(cases: string, n: number, sentence: string): string {
+export function addAntiPattern(antiPatterns: string, n: number, sentence: string): string {
   const bullet = `- ${sentence}`
-  const lines = cases.split('\n')
+  const lines = antiPatterns.split('\n')
   const own = new RegExp(`^#{1,6}\\s*${n}(?:[.)]|\\s|$)`)
   const at = lines.findIndex(line => own.test(line))
   if (at < 0) {
-    const kept = cases.replace(/\s+$/, '')
+    const kept = antiPatterns.replace(/\s+$/, '')
 
     return `${kept === '' ? '' : `${kept}\n\n`}## ${n}.\n\n${bullet}\n`
   }
@@ -1266,34 +1266,34 @@ export function addCase(cases: string, n: number, sentence: string): string {
 }
 
 /**
- * The `{{vision}}` field with the draft's sentence added. With a case file
- * and the place `invariant <n>`, the sentence goes into the case text under
- * invariant n (`inCases`). Otherwise it goes into the vision as
+ * The `{{vision}}` field with the draft's sentence added. With an anti-patterns file
+ * and the place `invariant <n>`, the sentence goes into the anti-patterns text under
+ * invariant n (`inAntiPatterns`). Otherwise it goes into the vision as
  * `addSentence` places it.
  */
 export function addDraftSentence(
   vision: string,
-  cases: string | undefined,
+  antiPatterns: string | undefined,
   place: string,
   sentence: string,
-): { text: string; target: number; isNew: boolean; inCases: boolean } {
+): { text: string; target: number; isNew: boolean; inAntiPatterns: boolean } {
   const wanted = /^invariant (\d+)$/.exec(place)
   const target = wanted ? Number(wanted[1]) : 0
   // A number that the vision does not hold names no invariant: the sentence
   // then goes the way of `addSentence`, as a new invariant.
   const held = vision.split('\n').some(line => Number(ITEM.exec(line)?.[1]) === target)
-  if (cases !== undefined && wanted && held) {
+  if (antiPatterns !== undefined && wanted && held) {
 
     return {
-      text: visionField(vision, addCase(cases, target, sentence)),
+      text: visionField(vision, addAntiPattern(antiPatterns, target, sentence)),
       target,
       isNew: false,
-      inCases: true,
+      inAntiPatterns: true,
     }
   }
   const added = addSentence(vision, place, sentence)
 
-  return { ...added, text: visionField(added.text, cases), inCases: false }
+  return { ...added, text: visionField(added.text, antiPatterns), inAntiPatterns: false }
 }
 
 /** What one excerpt check gave: a reply, or why there is none. */
@@ -1463,9 +1463,9 @@ function placeText(target: number, isNew: boolean): string {
 }
 
 /** Where the draft's sentence goes, as a report names it. */
-function draftHeading(target: number, isNew: boolean, inCases: boolean): string {
-  return inCases
-    ? `Draft sentence for VISION-CASES.md, under invariant ${target}`
+function draftHeading(target: number, isNew: boolean, inAntiPatterns: boolean): string {
+  return inAntiPatterns
+    ? `Draft sentence for ANTI-PATTERNS.md, under invariant ${target}`
     : `Draft sentence for VISION.md, ${placeText(target, isNew)}`
 }
 
@@ -1473,7 +1473,7 @@ function draftHeading(target: number, isNew: boolean, inCases: boolean): string 
 function closingLines(
   draft: CourseKeeperDraft,
   version: string | undefined,
-  inCases: boolean,
+  inAntiPatterns: boolean,
 ): string[] {
   const lines = draft.allowed === '' ? [] : [`Must stay allowed: ${draft.allowed}`]
   const date = new Date(draft.draftedAt).toISOString().slice(0, 10)
@@ -1483,8 +1483,8 @@ function closingLines(
       `${draft.model || "the session's model"}` +
       `${version === undefined ? '' : `; course keeper ${version}`}.`,
     '',
-    inCases
-      ? 'This is a draft for the owners of VISION-CASES.md and VISION.md. Course keeper does not change the files.'
+    inAntiPatterns
+      ? 'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course keeper does not change the files.'
       : 'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
     '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
     '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
@@ -1504,13 +1504,13 @@ export function learnReport(input: {
   verify: ExcerptResult
   earlier: EarlierTest
   version?: string
-  /** True when the sentence goes into VISION-CASES.md. */
-  inCases?: boolean
+  /** True when the sentence goes into ANTI-PATTERNS.md. */
+  inAntiPatterns?: boolean
 }): string {
   const { draft, target, isNew, control, verify, earlier, version } = input
-  const inCases = input.inCases === true
+  const inAntiPatterns = input.inAntiPatterns === true
   const lines = [
-    `${draftHeading(target, isNew, inCases)}:`,
+    `${draftHeading(target, isNew, inAntiPatterns)}:`,
     `  ${draft.sentence}`,
     '',
   ]
@@ -1528,7 +1528,7 @@ export function learnReport(input: {
   lines.push(
     `Test on the turn you corrected: ${verifyLine(verify, target)}`,
     earlierLine(earlier),
-    ...closingLines(draft, version, inCases),
+    ...closingLines(draft, version, inAntiPatterns),
   )
 
   return lines.join('\n')
@@ -1543,18 +1543,18 @@ export function untestedReport(input: {
   target: number
   isNew: boolean
   version?: string
-  /** True when the sentence goes into VISION-CASES.md. */
-  inCases?: boolean
+  /** True when the sentence goes into ANTI-PATTERNS.md. */
+  inAntiPatterns?: boolean
 }): string {
   const { draft, target, isNew, version } = input
-  const inCases = input.inCases === true
+  const inAntiPatterns = input.inAntiPatterns === true
 
   return [
     'The turn you corrected is too long for the test. The agent\'s words fall in the part ' +
       'that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.',
     '',
-    `${draftHeading(target, isNew, inCases)} (not tested):`,
+    `${draftHeading(target, isNew, inAntiPatterns)} (not tested):`,
     `  ${draft.sentence}`,
-    ...closingLines(draft, version, inCases),
+    ...closingLines(draft, version, inAntiPatterns),
   ].join('\n')
 }

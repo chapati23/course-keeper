@@ -3,8 +3,8 @@ import type { SessionMessage } from 'claude-code'
 
 import type { CourseKeeperAlert, CourseKeeperDraft, CourseKeeperSession } from '../types'
 import {
-  CASES_HEADING,
-  CASES_NOTE,
+  ANTI_PATTERNS_HEADING,
+  ANTI_PATTERNS_NOTE,
   CHECK_STALE_MS,
   LEARN_LIMITS,
   LIMITS,
@@ -13,7 +13,7 @@ import {
   NO_ALERTS,
   NO_INSTRUCTIONS,
   NO_CATCH,
-  addCase,
+  addAntiPattern,
   addDraftSentence,
   addInstructions,
   addSentence,
@@ -1053,10 +1053,10 @@ describe('the vision with the sentence', () => {
   })
 })
 
-describe('the case file', () => {
+describe('the anti-patterns file', () => {
   const VISION = '# Vision\n\nA tool.\n\n1. One module computes every amount.\n2. The tool never sends an invoice.\n'
-  const CASES = [
-    '# Cases for the vision',
+  const ANTI_PATTERNS = [
+    '# Anti-patterns for the vision',
     '',
     '## 1. One module computes every amount',
     '',
@@ -1068,83 +1068,83 @@ describe('the case file', () => {
     '',
   ].join('\n')
 
-  test('the vision field is the vision alone without a case file or with an empty one', () => {
+  test('the vision field is the vision alone without an anti-patterns file or with an empty one', () => {
     expect(visionField(VISION, undefined)).toBe(VISION)
     expect(visionField(VISION, ' \n\n')).toBe(VISION)
   })
 
-  test('the vision field holds the case text under its own heading', () => {
-    expect(visionField(VISION, CASES)).toBe(
-      `${VISION.trimEnd()}\n\n${CASES_HEADING}\n${CASES_NOTE}\n\n${CASES}`,
+  test('the vision field holds the anti-patterns text under its own heading', () => {
+    expect(visionField(VISION, ANTI_PATTERNS)).toBe(
+      `${VISION.trimEnd()}\n\n${ANTI_PATTERNS_HEADING}\n${ANTI_PATTERNS_NOTE}\n\n${ANTI_PATTERNS}`,
     )
-    expect(CASES_HEADING).toBe('# Cases: acts that break the invariants above')
+    expect(ANTI_PATTERNS_HEADING).toBe('# Anti-patterns: acts that break the invariants above')
   })
 
-  test('a case goes at the end of its section, before the blank lines', () => {
-    expect(addCase(CASES, 1, 'Never convert money in the client.')).toBe(
-      CASES.replace(
+  test('an anti-pattern goes at the end of its section, before the blank lines', () => {
+    expect(addAntiPattern(ANTI_PATTERNS, 1, 'Never convert money in the client.')).toBe(
+      ANTI_PATTERNS.replace(
         'other code.\n',
         'other code.\n- Never convert money in the client.\n',
       ),
     )
-    expect(addCase(CASES, 2, 'Never queue a mail.')).toBe(
-      CASES.replace('from the tool.\n', 'from the tool.\n- Never queue a mail.\n'),
+    expect(addAntiPattern(ANTI_PATTERNS, 2, 'Never queue a mail.')).toBe(
+      ANTI_PATTERNS.replace('from the tool.\n', 'from the tool.\n- Never queue a mail.\n'),
     )
     // A section that holds only its heading gets a blank line first.
-    expect(addCase('### 3. Tests\n\n## 4. Other\n', 3, 'Never skip.')).toBe(
+    expect(addAntiPattern('### 3. Tests\n\n## 4. Other\n', 3, 'Never skip.')).toBe(
       '### 3. Tests\n\n- Never skip.\n\n## 4. Other\n',
     )
   })
 
-  test('a case for an invariant without a section starts a new section at the end', () => {
-    expect(addCase(CASES, 3, 'Never skip a test.')).toBe(
-      `${CASES.trimEnd()}\n\n## 3.\n\n- Never skip a test.\n`,
+  test('an anti-pattern for an invariant without a section starts a new section at the end', () => {
+    expect(addAntiPattern(ANTI_PATTERNS, 3, 'Never skip a test.')).toBe(
+      `${ANTI_PATTERNS.trimEnd()}\n\n## 3.\n\n- Never skip a test.\n`,
     )
-    expect(addCase('', 1, 'Never round.')).toBe('## 1.\n\n- Never round.\n')
+    expect(addAntiPattern('', 1, 'Never round.')).toBe('## 1.\n\n- Never round.\n')
     // Section 13 is not section 1, and the new bare heading is found again.
-    const once = addCase('## 13. Other\n', 1, 'Never round.')
+    const once = addAntiPattern('## 13. Other\n', 1, 'Never round.')
     expect(once).toBe('## 13. Other\n\n## 1.\n\n- Never round.\n')
-    expect(addCase(once, 1, 'Never add.')).toBe(
+    expect(addAntiPattern(once, 1, 'Never add.')).toBe(
       '## 13. Other\n\n## 1.\n\n- Never round.\n- Never add.\n',
     )
   })
 
-  test('with a case file, a sentence for an invariant goes into the case text', () => {
-    expect(addDraftSentence(VISION, CASES, 'invariant 2', 'Never queue a mail.')).toEqual({
-      text: visionField(VISION, addCase(CASES, 2, 'Never queue a mail.')),
+  test('with an anti-patterns file, a sentence for an invariant goes into the anti-patterns text', () => {
+    expect(addDraftSentence(VISION, ANTI_PATTERNS, 'invariant 2', 'Never queue a mail.')).toEqual({
+      text: visionField(VISION, addAntiPattern(ANTI_PATTERNS, 2, 'Never queue a mail.')),
       target: 2,
       isNew: false,
-      inCases: true,
+      inAntiPatterns: true,
     })
     // The vision has no invariant 9: the sentence is a new invariant of the vision.
-    expect(addDraftSentence(VISION, CASES, 'invariant 9', 'Never guess.')).toMatchObject({
+    expect(addDraftSentence(VISION, ANTI_PATTERNS, 'invariant 9', 'Never guess.')).toMatchObject({
       isNew: true,
-      inCases: false,
+      inAntiPatterns: false,
     })
     // A heading with the number and no mark after it is the invariant's section.
-    expect(addCase('## 1 Pricing\n\n- Never C.\n\n## 10 Other\n', 1, 'Never B.')).toBe(
+    expect(addAntiPattern('## 1 Pricing\n\n- Never C.\n\n## 10 Other\n', 1, 'Never B.')).toBe(
       '## 1 Pricing\n\n- Never C.\n- Never B.\n\n## 10 Other\n',
     )
   })
 
-  test('a new invariant, or no case file, goes into the vision', () => {
-    expect(addDraftSentence(VISION, CASES, 'new', 'Never guess.')).toEqual({
-      text: visionField(`${VISION}\n3. Never guess.\n`, CASES),
+  test('a new invariant, or no anti-patterns file, goes into the vision', () => {
+    expect(addDraftSentence(VISION, ANTI_PATTERNS, 'new', 'Never guess.')).toEqual({
+      text: visionField(`${VISION}\n3. Never guess.\n`, ANTI_PATTERNS),
       target: 3,
       isNew: true,
-      inCases: false,
+      inAntiPatterns: false,
     })
     expect(addDraftSentence(VISION, undefined, 'invariant 1', 'Never round.')).toEqual({
       ...addSentence(VISION, 'invariant 1', 'Never round.'),
-      inCases: false,
+      inAntiPatterns: false,
     })
   })
 
-  test('the status shows the case file under VISION.md', () => {
-    expect(statusText(emptyRecord(), '/r/VISION.md', '/r/VISION-CASES.md')).toMatch(
-      /^VISION\.md: \/r\/VISION\.md\nVISION-CASES\.md: \/r\/VISION-CASES\.md\nChecks: on/,
+  test('the status shows the anti-patterns file under VISION.md', () => {
+    expect(statusText(emptyRecord(), '/r/VISION.md', '/r/ANTI-PATTERNS.md')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\nANTI-PATTERNS\.md: \/r\/ANTI-PATTERNS\.md\nChecks: on/,
     )
-    expect(statusText(emptyRecord(), '/r/VISION.md')).not.toContain('VISION-CASES.md')
+    expect(statusText(emptyRecord(), '/r/VISION.md')).not.toContain('ANTI-PATTERNS.md')
   })
 })
 
@@ -1285,24 +1285,24 @@ describe('the learn answers', () => {
     ).toContain('as a new invariant (not tested):\n  Never round')
   })
 
-  test('a sentence for the case file names both files', () => {
+  test('a sentence for the anti-patterns file names both files', () => {
     const owners =
-      'This is a draft for the owners of VISION-CASES.md and VISION.md. Course keeper does not change the files.'
+      'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course keeper does not change the files.'
     const report = learnReport({
       draft: draftOf(),
       target: 1,
       isNew: false,
-      inCases: true,
+      inAntiPatterns: true,
       control: silent,
       verify: alert('invariant 1'),
       earlier: { tested: 0, newAlerts: [], noResults: [] },
     })
-    expect(report).toMatch(/^Draft sentence for VISION-CASES\.md, under invariant 1:\n {2}Never round/)
+    expect(report).toMatch(/^Draft sentence for ANTI-PATTERNS\.md, under invariant 1:\n {2}Never round/)
     expect(report).toContain(owners)
     expect(report).not.toContain('owners of VISION.md.')
-    const untested = untestedReport({ draft: draftOf(), target: 1, isNew: false, inCases: true })
+    const untested = untestedReport({ draft: draftOf(), target: 1, isNew: false, inAntiPatterns: true })
     expect(untested).toContain(
-      'Draft sentence for VISION-CASES.md, under invariant 1 (not tested):\n  Never round',
+      'Draft sentence for ANTI-PATTERNS.md, under invariant 1 (not tested):\n  Never round',
     )
     expect(untested).toContain(owners)
   })

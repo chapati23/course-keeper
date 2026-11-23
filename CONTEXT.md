@@ -14,8 +14,8 @@ _Avoid_: mission, north star, principles
 One numbered, testable statement in the vision that a session must not contradict.
 _Avoid_: rule, principle, guideline
 
-**Case file**:
-An optional file beside the vision, kept as `VISION-CASES.md`, that holds the sentences that name acts to avoid, in one section for each invariant. An act named there breaks that invariant.
+**Anti-patterns file**:
+An optional file beside the vision, kept as `ANTI-PATTERNS.md`, that holds the sentences that name acts to avoid, in one section for each invariant. An act named there breaks that invariant.
 _Avoid_: examples, appendix, rule book
 
 **Standing instruction**:
