@@ -27,6 +27,7 @@ import {
   draftText,
   earlierTurns,
   excerptCheckPrompt,
+  failingRow,
   fillCheckPrompt,
   fillExtractPrompt,
   fillLearnPrompt,
@@ -471,6 +472,8 @@ const NO_DRAFT =
  * does not touch the check's in-flight mark, alerts or outcome.
  */
 async function learn($: $, words: string): Promise<string> {
+  // Read before the first wait, as a check reads it.
+  const turn = endedTurn
   const id = await $.session.id()
   const verb = words.toLowerCase()
 
@@ -506,7 +509,7 @@ async function learn($: $, words: string): Promise<string> {
   try {
     return verb === 'yes'
       ? await testDraft($, id, vision.text)
-      : await makeDraft($, id, vision.text, words)
+      : await makeDraft($, id, vision.text, words, turn)
   } catch {
     return 'Course keeper could not finish the learn step: a prompt file or a call failed.'
   } finally {
@@ -522,12 +525,22 @@ async function makeDraft(
   id: string,
   vision: string,
   words: string,
+  turn: { turnId: string; answer: string } | undefined,
 ): Promise<string> {
   // A new request replaces a draft the person did not accept.
   await change($, id, withoutDraft)
   const template = await readPrompt($, 'learn')
+  // As for a check: the fork's last request does not hold the agent's final
+  // answer to it, so the answer goes before the prompt. When the next turn
+  // started since, the fork's last request is that turn's, and no answer is
+  // added. Nothing waits between this test and the fork.
+  const isOvertaken =
+    turn !== undefined && startedTurn !== undefined && startedTurn !== turn.turnId
   const reply = await $.model.fork({
-    prompt: fillLearnPrompt(template, { vision, catch: catchText(words) }),
+    prompt: withFinalAnswer(
+      fillLearnPrompt(template, { vision, catch: catchText(words) }),
+      isOvertaken ? '' : turn?.answer ?? '',
+    ),
   })
   if (!reply.isAnswered) {
     return reply.reason === 'nothing-to-fork'
@@ -579,7 +592,7 @@ async function testDraft($: $, id: string, vision: string): Promise<string> {
   }
 
   const rows = await $.session.messages()
-  const at = findQuote(rows, draft.quote)
+  const at = failingRow(rows, draft.quote)
   if (at < 0) {
     await drop()
 

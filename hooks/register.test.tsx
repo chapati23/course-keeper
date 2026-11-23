@@ -58,7 +58,10 @@ type Options = {
   messages?: () => SessionMessage[]
   /** What `$.session.model()` answers, or a failure. */
   model?: () => string | 'fail'
-  /** The reply of a `$.model.complete` call that is not the extract call. */
+  /**
+   * The reply of a `$.model.complete` call that is not the extract call:
+   * `unanswered` for a call cut before a reply, `fail` for a call that fails.
+   */
   complete?: (prompt: string) => string | undefined
 }
 
@@ -117,6 +120,10 @@ function world(
     completions.push(prompt)
     models.push(e.model)
     const own = options.complete?.(prompt)
+    if (own === 'unanswered') {
+      return { value: { isAnswered: false, reason: 'aborted', usage: USAGE } }
+    }
+    if (own === 'fail') return { deny: 'the API is down' }
     if (own !== undefined) return { value: { isAnswered: true, text: own, usage: USAGE } }
     await options.extractWait
 
@@ -927,7 +934,7 @@ function excerptReplies(replies: {
 }
 
 const learnFork = (other = 'verdict: none') => (prompt: string) =>
-  prompt.startsWith('Catch:') ? DRAFT : other
+  prompt.includes('Catch:') ? DRAFT : other
 
 test('learn drafts a sentence, shows the act, and tests it on excerpts of the session', async ($, on) => {
   const { forks, completions, models } = world(on, learnFork(), 'none', {
@@ -1159,4 +1166,131 @@ test('a stale learn mark does not block', async ($, on) => {
   expect(forks).toHaveLength(1)
   held = { ...(held as object), learningSince: clock.now() - 1000 }
   expect(await command($, 'learn')).toContain('A learn step is already running')
+})
+
+/** Excerpt check replies by turn and vision; any of them can be `unanswered` or `fail`. */
+function excerptBy(pick: (turn: 'failing' | 'earlier', added: boolean) => string) {
+  return (prompt: string) => {
+    if (!prompt.includes('Excerpt head.')) return undefined
+    const turn = prompt.includes("## The agent's latest turn\n\nINPUT: Now add the checkout.")
+      ? 'failing'
+      : 'earlier'
+
+    return pick(turn, prompt.includes(SENTENCE))
+  }
+}
+
+test('a call that is cut or malformed counts as no result, never as silent', async ($, on) => {
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) =>
+      turn === 'failing' ? (added ? 'not a check reply' : 'unanswered') : 'verdict: none',
+    ),
+  })
+
+  await command($, 'learn')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    "Check with today's vision on the turn you corrected: no result (the call ended with aborted).",
+  )
+  expect(report).toContain('Test on the turn you corrected: no result (the reply was malformed).')
+  expect(report).not.toContain('stays silent')
+  expect(report).toContain('Test on 1 earlier turn of this session: no new alert.')
+  expect(completions).toHaveLength(3)
+})
+
+test('a call that fails on the corrected turn or on an earlier turn is no result', async ($, on) => {
+  world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) =>
+      turn === 'failing' ? (added ? 'unanswered' : 'verdict: none') : 'fail',
+    ),
+  })
+
+  await command($, 'learn')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    'Test on the turn you corrected: no result (the call ended with aborted).',
+  )
+  expect(report).toContain(
+    'Test on 1 earlier turn of this session: no result (the call failed).',
+  )
+  expect(report).not.toContain('no new alert')
+})
+
+test('an earlier alert counts as new only when today\'s vision is silent there', async ($, on) => {
+  let today = deviation('I will keep prices in the service.')
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) => {
+      if (turn === 'failing') {
+        return added ? deviation('I will add a fallback price table in the client.') : 'verdict: none'
+      }
+
+      return added ? deviation('I will keep prices in the service.') : today
+    }),
+  })
+
+  await command($, 'learn')
+  expect(await command($, 'learn yes')).toContain(
+    'Test on 1 earlier turn of this session: no new alert.',
+  )
+  // Control, verify, the earlier turn with the sentence, and its control.
+  expect(completions).toHaveLength(4)
+
+  today = 'unanswered'
+  await command($, 'learn')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    'Test on 1 earlier turn of this session: no result (the call ended with aborted).',
+  )
+  expect(report).not.toContain('new alert')
+})
+
+test('the failing turn is the one before the correction when the agent repeats its words', async ($, on) => {
+  const rows: SessionMessage[] = [
+    ...ROWS.slice(0, 5),
+    {
+      role: 'assistant',
+      text: 'You are right; I wrote "I will add a fallback price table in the client." That is wrong.',
+      toolUses: [],
+    },
+  ]
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => rows,
+    complete: excerptReplies({
+      failing: ['verdict: none', deviation('I will add a fallback price table in the client.')],
+    }),
+  })
+
+  await command($, 'learn')
+  expect(await command($, 'learn yes')).toContain(
+    'Test on the turn you corrected: the check alerts with this sentence added.',
+  )
+  const verify = completions.find(p => p.includes(SENTENCE) && p.includes('AGENT: I will add'))
+  expect(verify).toBeDefined()
+  expect(verify).not.toContain('You are right')
+})
+
+test('the learn fork gets the agent\'s final answer of the last turn', async ($, on) => {
+  const { clock, forks } = world(on, learnFork(), 'none', { messages: () => ROWS })
+
+  await personTypes($, 'Now add the checkout.')
+  await settle(clock)
+  await $.turn.start({ text: 'Now add the checkout.', turnId: 'turn-1' })
+  await $.turn.complete(END)
+  await settle(clock)
+  forks.length = 0
+
+  await command($, 'learn')
+  expect(forks).toHaveLength(1)
+  expect(forks[0]).toContain(
+    '<final_answer>\nI will add a fallback price table in the client.\n</final_answer>\n\nCatch:',
+  )
+
+  // When the next turn started since, the fork's last request is that turn's.
+  await $.turn.start({ text: 'go on', turnId: 'turn-2' })
+  forks.length = 0
+  await command($, 'learn')
+  expect(forks[0]).not.toContain('<final_answer>')
 })

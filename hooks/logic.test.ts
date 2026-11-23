@@ -22,6 +22,7 @@ import {
   earlierTurns,
   emptyRecord,
   excerptCheckPrompt,
+  failingRow,
   fillCheckPrompt,
   fillExtractPrompt,
   fillLearnPrompt,
@@ -703,6 +704,22 @@ describe('the quote test', () => {
     expect(findQuote(rows.slice(0, 1), 'Plan the export.')).toBe(-1)
     expect(findQuote(rows, '  ')).toBe(-1)
   })
+
+  test('the failing reply comes before the correction, not from the answer that repeats it', () => {
+    const corrected = [
+      row('user', 'Fix the build.'),
+      row('assistant', 'I will delete the failing tests.'),
+      row('user', 'No, never delete tests.'),
+      row('assistant', 'You are right, I said I will delete the failing tests. I will restore them.'),
+    ]
+    expect(findQuote(corrected, 'I will delete the failing tests.')).toBe(3)
+    expect(failingRow(corrected, 'I will delete the failing tests.')).toBe(1)
+    // Only the newest turn holds the quote: the person ran the command at once.
+    expect(failingRow(corrected.slice(0, 2), 'I will delete the failing tests.')).toBe(1)
+    expect(failingRow(corrected, 'I will restore them.')).toBe(3)
+    expect(failingRow(corrected, 'Other words.')).toBe(-1)
+    expect(failingRow(corrected, ' ')).toBe(-1)
+  })
 })
 
 describe('turns and excerpts', () => {
@@ -729,26 +746,68 @@ describe('turns and excerpts', () => {
     ])
   })
 
-  test('each person message starts a turn', () => {
+  test('each person message starts a turn, and a turn ends at its last assistant row', () => {
     expect(turnsOf(rows)).toEqual([
       { start: 0, end: 0 },
-      { start: 1, end: 6 },
+      { start: 1, end: 4 },
       { start: 7, end: 8 },
       { start: 9, end: 10 },
     ])
-    expect(turnOf(rows, 4)).toEqual({ start: 1, end: 6 })
+    expect(turnOf(rows, 4)).toEqual({ start: 1, end: 4 })
     expect(turnsOf([])).toEqual([])
+    expect(turnsOf([row('user', 'Plan the export.'), row('user', '<notice>')])).toEqual([
+      { start: 0, end: 1 },
+    ])
+  })
+
+  test('the rows of a command after the failing reply are not part of its turn', () => {
+    const command: SessionMessage[] = [
+      row('user', 'Add the checkout.'),
+      row('assistant', 'I will add a price table in the client.'),
+      row('user', '<command-name>/course-keeper</command-name><command-args>learn it kept prices in the client</command-args>'),
+      row('user', '<local-command-stdout>Course keeper read this as the act you corrected</local-command-stdout>'),
+    ]
+    const turn = turnOf(command, 1)
+    expect(turn).toEqual({ start: 0, end: 1 })
+    const text = sessionExcerpt(command, turn)
+    expect(text).not.toContain('command-name')
+    expect(text).not.toContain('local-command-stdout')
+    expect(text).toContain("## The agent's latest turn\n\nINPUT: Add the checkout.\n\nAGENT: I will add a price table in the client.")
+  })
+
+  test('a user row right after tool results is inside the agent\'s turn, not a person message', () => {
+    const skill: SessionMessage[] = [
+      row('user', 'Plan the export.'),
+      row('assistant', '', { toolUses: [{ tool_use_id: 's', tool: 'Skill', input: { skill: 'x' } }] }),
+      row('user', '', { toolResults: [{ tool_use_id: 's', text: 'Launching skill: x', isError: false }] }),
+      row('user', 'Base directory for this skill: /x. Always round totals.'),
+      row('assistant', 'I will round the total in the exporter.'),
+      row('user', '[Request interrupted by user]'),
+      row('user', 'Stop rounding.'),
+      row('assistant', 'Stopped.'),
+    ]
+    expect(skill.map((r, k) => isPersonMessage(r, skill[k - 1]))).toEqual([
+      true, false, false, false, false, true, true, false,
+    ])
+    expect(turnsOf(skill)).toEqual([
+      { start: 0, end: 4 },
+      { start: 5, end: 5 },
+      { start: 6, end: 7 },
+    ])
+    const text = sessionExcerpt(skill, { start: 0, end: 4 })
+    expect(text).toContain('## Messages the person sent, oldest first\n\nPlan the export.\n\n##')
+    expect(text).toContain('INPUT: Base directory for this skill')
   })
 
   test('earlier turns hold an assistant row, newest first, at most three', () => {
     expect(earlierTurns(rows, { start: 9, end: 10 })).toEqual([
       { start: 7, end: 8 },
-      { start: 1, end: 6 },
+      { start: 1, end: 4 },
       { start: 0, end: 0 },
     ])
     expect(earlierTurns(rows, { start: 9, end: 10 }, 1)).toEqual([{ start: 7, end: 8 }])
-    expect(earlierTurns(rows, { start: 1, end: 6 })).toEqual([{ start: 0, end: 0 }])
-    expect(earlierTurns(rows.slice(1), { start: 0, end: 5 })).toEqual([])
+    expect(earlierTurns(rows, { start: 1, end: 4 })).toEqual([{ start: 0, end: 0 }])
+    expect(earlierTurns(rows.slice(1), { start: 0, end: 3 })).toEqual([])
   })
 
   test('the excerpt of a turn', () => {

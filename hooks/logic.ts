@@ -878,6 +878,24 @@ export function findQuote(rows: readonly SessionMessage[], quote: string): numbe
   )
 }
 
+/**
+ * The failing reply of a draft: the last assistant row that holds the quote
+ * (as `findQuote` reads it) and that comes before the last person message.
+ * The agent's answer to the correction can repeat the words it is corrected
+ * for, so a row in the newest turn counts only when no earlier row holds the
+ * quote. -1 when no row holds it.
+ */
+export function failingRow(rows: readonly SessionMessage[], quote: string): number {
+  const wanted = collapse(quote)
+  if (wanted === '') return -1
+  const newest = rows.findLastIndex((_, k) => isPersonMessage(rows[k], rows[k - 1]))
+  const before = rows.findLastIndex(
+    (row, k) => k < newest && row.role === 'assistant' && collapse(row.text).includes(wanted),
+  )
+
+  return before >= 0 ? before : findQuote(rows, quote)
+}
+
 function isCompactionSummary(row: SessionMessage): boolean {
   return row.role === 'user' && row.text.trimStart().startsWith(COMPACTION_START)
 }
@@ -885,11 +903,17 @@ function isCompactionSummary(row: SessionMessage): boolean {
 /**
  * True for a message the person sent: a user row with text and no tool
  * results that is neither an engine notice (it starts with `<`) nor a
- * compaction summary.
+ * compaction summary. A user row right after a row of tool results is not
+ * one either: the engine put it there inside the agent's turn (a skill's
+ * text after the skill's tool call, say).
  */
-export function isPersonMessage(row: SessionMessage | undefined): boolean {
+export function isPersonMessage(
+  row: SessionMessage | undefined,
+  previous?: SessionMessage,
+): boolean {
   if (row === undefined || row.role !== 'user') return false
   if ((row.toolResults?.length ?? 0) > 0) return false
+  if (previous?.role === 'user' && (previous.toolResults?.length ?? 0) > 0) return false
   const text = row.text.trimStart()
 
   return text !== '' && !text.startsWith('<') && !text.startsWith(COMPACTION_START)
@@ -900,14 +924,19 @@ export type Turn = { start: number; end: number }
 
 /**
  * The turns of a transcript, oldest first. Each person message starts a
- * turn; the rows before the first one form a turn of their own.
+ * turn; the rows before the first one form a turn of their own. A turn
+ * ends at its last assistant row: the rows after it (engine notices, the
+ * rows of a command) are not part of the agent's turn. A turn without an
+ * assistant row runs to the row before the next person message.
  */
 export function turnsOf(rows: readonly SessionMessage[]): Turn[] {
   const turns: Turn[] = []
   let start = 0
   for (let k = 1; k <= rows.length; k += 1) {
-    if (k === rows.length || isPersonMessage(rows[k])) {
-      turns.push({ start, end: k - 1 })
+    if (k === rows.length || isPersonMessage(rows[k], rows[k - 1])) {
+      let end = k - 1
+      while (end > start && rows[end]?.role !== 'assistant') end -= 1
+      turns.push({ start, end: rows[end]?.role === 'assistant' ? end : k - 1 })
       start = k
     }
   }
@@ -994,7 +1023,7 @@ export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): str
     const row = rows[k]
     if (row === undefined) continue
     if (isCompactionSummary(row)) summary = row.text.trim()
-    if (k <= turn.start && isPersonMessage(row)) {
+    if (k <= turn.start && isPersonMessage(row, rows[k - 1])) {
       const text = row.text.trim()
       if (!person.includes(text)) person.push(text)
     }
