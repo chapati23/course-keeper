@@ -190,7 +190,7 @@ function describeAnswer(answer: CourseKeeperAnswer | null): string {
     case null:
       return 'none yet'
     case 'intended':
-      return 'intended (the person wanted this)'
+      return 'false alarm (the person says this is no deviation, or wanted it)'
     default:
       return answer
   }
@@ -361,12 +361,14 @@ export function restoreUnsent(
 
 /**
  * Applies a check's reply to the record: the new record, the outcome to
- * show in `/course-keeper`, and the new alert when there is one.
+ * show in `/course-keeper`, and the new alert when there is one. A new
+ * alert keeps `title`, the cited invariant's title, when one is given.
  */
 export function applyReply(
   record: CourseKeeperSession,
   reply: CheckReply | undefined,
   now: number,
+  title?: string,
 ): {
   record: CourseKeeperSession
   outcome: string
@@ -388,6 +390,7 @@ export function applyReply(
 
   const shown: CourseKeeperAlert = {
     reference: reply.reference,
+    ...(title === undefined ? {} : { title }),
     alert: reply.alert,
     evidence: reply.evidence,
     note: reply.note,
@@ -521,6 +524,67 @@ export function noteText(alert: CourseKeeperAlert): string {
     `Course keeper alert on ${alert.reference}. ` +
     `Evidence: "${alert.evidence}". Note: ${alert.note}`
   )
+}
+
+/** The most characters kept of an invariant's title or an instruction in a headline. */
+export const MAX_HEADLINE_PART = 60
+
+/**
+ * The title of the invariant that `reference` cites, from the vision text:
+ * on the first outer item numbered n (its lines joined), the bold lead `**…**` when the item
+ * starts with one, else the first sentence, without a trailing period,
+ * cleaned and cut to MAX_HEADLINE_PART characters. Undefined for a
+ * reference that is not `invariant <n>`, or when the vision has no such item.
+ */
+export function invariantTitle(vision: string, reference: string): string | undefined {
+  const wanted = /^invariant (\d+)$/.exec(reference)
+  if (!wanted) return undefined
+  const n = Number(wanted[1])
+  const lines = vision.split('\n')
+  // The invariants are the items at the outer level: a numbered step inside
+  // an invariant is indented further and is not one.
+  const indent = (l: string): number => /^\s*/.exec(l)?.[0].length ?? 0
+  const items = lines.filter(l => ITEM.test(l))
+  const outer = Math.min(...items.map(indent))
+  const at = lines.findIndex(
+    l => indent(l) === outer && Number(ITEM.exec(l)?.[1]) === n,
+  )
+  if (at < 0) return undefined
+  // A lead can wrap: the item runs to the next blank line or the next item.
+  let end = at + 1
+  while (end < lines.length && (lines[end] ?? '').trim() !== '' && !ITEM.test(lines[end] ?? '')) end += 1
+  const rest = lines
+    .slice(at, end)
+    .map((l, i) => (i === 0 ? l.replace(ITEM, '') : l.trim()))
+    .join(' ')
+  const bold = /^\s*\*\*(.+?)\*\*/.exec(rest)
+  const lead = bold ? (bold[1] ?? '') : (/^.*?\.(?=\s|$)/.exec(rest.trim())?.[0] ?? rest)
+  const title = clean(clean(lead, Infinity).replace(/\.$/, ''), MAX_HEADLINE_PART)
+
+  return title === '' ? undefined : title
+}
+
+/**
+ * What the alert's headline says after "Course keeper: ", from its
+ * reference and the title stored with it.
+ */
+export function alertSubject(alert: CourseKeeperAlert): string {
+  const instruction = /^instruction "(.*)$/.exec(alert.reference)
+  if (instruction) {
+    const words = clean((instruction[1] ?? '').replace(/"$/, ''), MAX_HEADLINE_PART)
+
+    return `this session breaks your instruction "${words}"`
+  }
+  if (/^invariant \d+$/.test(alert.reference) && alert.title !== undefined) {
+    return `this session breaks ${alert.reference} (${alert.title})`
+  }
+
+  return `this session breaks ${alert.reference}`
+}
+
+/** The alert's headline, as the row and the desktop notification show it. */
+export function alertHeadline(alert: CourseKeeperAlert): string {
+  return `Course keeper: ${alertSubject(alert)}`
 }
 
 /** The notice shown when standing instructions are added. */
@@ -665,7 +729,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function readAlert(value: unknown): CourseKeeperAlert | undefined {
   if (!isObject(value)) return undefined
-  const { reference, alert, evidence, note, shownAt, answer } = value
+  const { reference, title, alert, evidence, note, shownAt, answer } = value
   if (
     typeof reference !== 'string' ||
     typeof alert !== 'string' ||
@@ -677,8 +741,12 @@ function readAlert(value: unknown): CourseKeeperAlert | undefined {
     return undefined
   }
 
+  // Absent in a record written before alerts kept a title.
+  const kept = typeof title === 'string' ? clean(title, MAX_HEADLINE_PART) : ''
+
   return {
     reference: clean(reference, LIMITS.reference),
+    ...(kept === '' ? {} : { title: kept }),
     alert: clean(alert, LIMITS.alert),
     evidence: clean(evidence, LIMITS.evidence),
     note: clean(note, LIMITS.note),

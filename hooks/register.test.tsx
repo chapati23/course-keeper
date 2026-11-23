@@ -168,7 +168,7 @@ function world(
   })
   const notified: string[] = []
   on('ui.notify', (_, e) => {
-    notified.push(e.text)
+    notified.push(e.title === undefined ? e.text : `${e.title}\n${e.text}`)
 
     return { value: { isSent: false, reason: 'no-surface' } }
   })
@@ -225,6 +225,37 @@ async function status($: Engine): Promise<string> {
   return command($, '')
 }
 
+type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+
+/** One element as the terminal writes it; a plain Button reads `hotkey: label`. */
+function lineOf(node: unknown): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (typeof node !== 'object' || node === null) return ''
+  const { type, props = {}, children = [] } = node as Drawn
+  if (type === 'Button' && typeof props.label === 'string') {
+    return typeof props.hotkey === 'string' ? `${props.hotkey}: ${props.label}` : props.label
+  }
+
+  return children.map(lineOf).join('')
+}
+
+/** The band's row, one string per line, as the terminal draws it. */
+async function rowLines(ui: {
+  find: (query: { type: string }) => Promise<{ children: unknown[] } | undefined>
+}): Promise<string[]> {
+  const outer = await ui.find({ type: 'Box' })
+
+  return outer === undefined ? [] : outer.children.map(lineOf)
+}
+
+/** The row for DEVIATION with the test's VISION. */
+const ROW = [
+  '▲ Course keeper: this session breaks invariant 1 (One service sets every price)',
+  '- The session adds a price table to the client, which contradicts invariant 1.',
+  '- Evidence: "I will add a fallback price table in the client."',
+  '1: Details · 2: Tell the agent · 3: False alarm · 4: Dismiss',
+]
+
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
   const { clock, forks } = world(on, () => DEVIATION)
 
@@ -243,15 +274,7 @@ test('a turn ends, the check finds a deviation, the band shows it, Dismiss clear
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect((await ui.find({ type: 'Text', text: /contradicts invariant 1/ }))?.text).toBe(
-      'The session adds a price table to the client, which contradicts invariant 1.',
-    )
-    expect(await ui.find({ type: 'Text', text: /Evidence/ })).toBeUndefined()
-    await ui.press({ key: 'details' })
-    expect((await ui.find({ type: 'Text', text: /Evidence/ }))?.text).toBe(
-      'Evidence: "I will add a fallback price table in the client."',
-    )
-    await ui.press({ key: 'details' })
+    expect(await rowLines(ui)).toEqual(ROW)
     await ui.unmount()
   }
 
@@ -267,6 +290,113 @@ test('a turn ends, the check finds a deviation, the band shows it, Dismiss clear
   const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await again.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
   await again.unmount()
+})
+
+test('Details shows the text for the agent as one more bullet, and hides it again', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'details' })
+  expect(await rowLines(ui)).toEqual([
+    ...ROW.slice(0, 3),
+    '- For the agent: Invariant 1 says one service sets every price. Move the table into that service.',
+    ROW[3],
+  ])
+  await ui.press({ key: 'details' })
+  expect(await rowLines(ui)).toEqual(ROW)
+  await ui.unmount()
+})
+
+test('Dismiss is on key 4 and False alarm on key 3, which later checks read as a false alarm', async ($, on) => {
+  const { clock, forks, notified } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+  // The notification has the row's headline and the alert sentence.
+  expect(notified).toEqual([
+    'Course keeper: this session breaks invariant 1 (One service sets every price)\n' +
+      'The session adds a price table to the client, which contradicts invariant 1.',
+  ])
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ type: 'Button', key: 'dismiss' }))?.props.hotkey).toBe('4')
+  expect((await ui.find({ type: 'Button', key: 'false-alarm' }))?.props.hotkey).toBe('3')
+  await ui.press({ key: 'false-alarm' })
+  expect(await ui.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  await ui.unmount()
+
+  expect(await status($)).toContain(
+    'Answer: false alarm (the person says this is no deviation, or wanted it).',
+  )
+  await $.turn.complete({ ...END, turnId: 'turn-2' })
+  await settle(clock)
+  expect(forks[1]).toContain(
+    "The person's answer: false alarm (the person says this is no deviation, or wanted it).",
+  )
+})
+
+test('an instruction reference quotes the words in the headline', async ($, on) => {
+  const { clock } = world(on, () =>
+    DEVIATION.replace('reference: invariant 1', 'reference: instruction "never add a table to the client"'),
+  )
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await rowLines(ui))[0]).toBe(
+    '▲ Course keeper: this session breaks your instruction "never add a table to the client"',
+  )
+  await ui.unmount()
+})
+
+test('an alert stored before alerts kept a title still draws, without a title', async ($, on) => {
+  world(on, () => 'verdict: none')
+  // A record as an earlier version wrote it: the alert has no title field.
+  let held: unknown = {
+    v: 1,
+    hasPerson: true,
+    isOff: false,
+    instructions: [],
+    alerts: [],
+    current: {
+      reference: 'invariant 1',
+      alert: 'The session adds a price table to the client, which contradicts invariant 1.',
+      evidence: 'I will add a fallback price table in the client.',
+      note: 'Move the table into that service.',
+      shownAt: 1,
+      answer: null,
+    },
+    showDetails: false,
+    lastCheck: null,
+    checkingSince: null,
+  }
+  let version = 1
+  on('state.get', () => ({ value: { value: held, version } }))
+  on('state.set', (_, e) => {
+    held = e.value
+    version += 1
+
+    return { value: { isSet: true, version } }
+  })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await rowLines(ui)).toEqual([
+      '▲ Course keeper: this session breaks invariant 1',
+      ...ROW.slice(1),
+    ])
+    await ui.unmount()
+  }
 })
 
 test('Tell the agent sends the note as the plugin, not as the person', async ($, on) => {
@@ -700,7 +830,7 @@ test('a check that lost its in-flight mark does not replace a newer alert', asyn
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /contradicts invariant 1/ }))?.text).toBe(
-    'The session adds a price table to the client, which contradicts invariant 1.',
+    '- The session adds a price table to the client, which contradicts invariant 1.',
   )
   await ui.unmount()
   // The dropped reply leaves the newer check's outcome in the status.

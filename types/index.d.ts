@@ -2,7 +2,10 @@
 // Old records can hold other shapes: the module validates every read
 // (normalizeRecord in hooks/logic.ts).
 
-/** The person's answer to an alert. */
+/**
+ * The person's answer to an alert. `intended` is the stored value of the
+ * button "False alarm"; it keeps its old name so old records stay valid.
+ */
 export type CourseKeeperAnswer =
   | 'intended'
   | 'told the agent'
@@ -13,6 +16,12 @@ export type CourseKeeperAnswer =
 export type CourseKeeperAlert = {
   /** `invariant <number>` or `instruction "<the person's words>"`. */
   reference: string
+  /**
+   * The title of the cited invariant, read from the vision when the check
+   * made the alert. Absent when the vision gave none, for an instruction,
+   * and in a record written before this field existed.
+   */
+  title?: string
   /** One sentence: what the session does, and what that contradicts. */
   alert: string
   /** A short quote from the agent's text or action. */
@@ -84,7 +93,7 @@ export type CourseKeeperSession = {
   alerts: CourseKeeperAlert[]
   /** The alert shown now, if any. */
   current: CourseKeeperAlert | null
-  /** True while the person has opened the evidence and the note. */
+  /** True while the person has opened the note with Details. */
   showDetails: boolean
   lastCheck: CourseKeeperCheck | null
   /**
