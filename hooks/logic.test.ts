@@ -373,6 +373,10 @@ describe('the headline', () => {
 
   test('no title for a missing item, an instruction, or a title that is empty', () => {
     expect(invariantTitle(VISION, 'invariant 9')).toBeUndefined()
+    // A lead that wraps is read to its end; a numbered step inside an invariant is not one.
+    const wrapped = '1. **One module\n   computes every amount.** No other code.\n   1. First step.\n   2. Second step.\n2. The tool sends\n   nothing. It writes files.\n'
+    expect(invariantTitle(wrapped, 'invariant 1')).toBe('One module computes every amount')
+    expect(invariantTitle(wrapped, 'invariant 2')).toBe('The tool sends nothing')
     expect(invariantTitle(VISION, 'instruction "1. never"')).toBeUndefined()
     expect(invariantTitle('1. **  **', 'invariant 1')).toBeUndefined()
   })

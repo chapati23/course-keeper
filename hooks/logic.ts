@@ -531,7 +531,7 @@ export const MAX_HEADLINE_PART = 60
 
 /**
  * The title of the invariant that `reference` cites, from the vision text:
- * on the first item line numbered n, the bold lead `**…**` when the item
+ * on the first outer item numbered n (its lines joined), the bold lead `**…**` when the item
  * starts with one, else the first sentence, without a trailing period,
  * cleaned and cut to MAX_HEADLINE_PART characters. Undefined for a
  * reference that is not `invariant <n>`, or when the vision has no such item.
@@ -540,9 +540,23 @@ export function invariantTitle(vision: string, reference: string): string | unde
   const wanted = /^invariant (\d+)$/.exec(reference)
   if (!wanted) return undefined
   const n = Number(wanted[1])
-  const line = vision.split('\n').find(l => Number(ITEM.exec(l)?.[1]) === n)
-  if (line === undefined) return undefined
-  const rest = line.replace(ITEM, '')
+  const lines = vision.split('\n')
+  // The invariants are the items at the outer level: a numbered step inside
+  // an invariant is indented further and is not one.
+  const indent = (l: string): number => /^\s*/.exec(l)?.[0].length ?? 0
+  const items = lines.filter(l => ITEM.test(l))
+  const outer = Math.min(...items.map(indent))
+  const at = lines.findIndex(
+    l => indent(l) === outer && Number(ITEM.exec(l)?.[1]) === n,
+  )
+  if (at < 0) return undefined
+  // A lead can wrap: the item runs to the next blank line or the next item.
+  let end = at + 1
+  while (end < lines.length && (lines[end] ?? '').trim() !== '' && !ITEM.test(lines[end] ?? '')) end += 1
+  const rest = lines
+    .slice(at, end)
+    .map((l, i) => (i === 0 ? l.replace(ITEM, '') : l.trim()))
+    .join(' ')
   const bold = /^\s*\*\*(.+?)\*\*/.exec(rest)
   const lead = bold ? (bold[1] ?? '') : (/^.*?\.(?=\s|$)/.exec(rest.trim())?.[0] ?? rest)
   const title = clean(clean(lead, Infinity).replace(/\.$/, ''), MAX_HEADLINE_PART)
