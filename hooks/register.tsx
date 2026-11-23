@@ -38,6 +38,7 @@ import {
   formatAlerts,
   formatInstructions,
   isCheckRunning,
+  isUnderRoot,
   isPersonOrigin,
   learnReport,
   noteText,
@@ -222,7 +223,9 @@ type Vision = {
  * when the session is in no repository. When `repo()` fails, whether there
  * is a repository is unknown, and there is no vision. ANTI-PATTERNS.md in the
  * same directory is read too; without VISION.md it is not used. Both names
- * are the configured ones; when they name the same file, it is the vision.
+ * are the configured ones. A file whose real path (every link followed) is
+ * not under the root's real path counts as not found, so its text never goes
+ * to a model. When both names lead to the same file, it is the vision.
  */
 async function readVision($: $): Promise<Vision | undefined> {
   let repo: SessionRepo | null
@@ -232,22 +235,49 @@ async function readVision($: $): Promise<Vision | undefined> {
     return undefined
   }
   const dir = (repo === null ? await $.session.root() : repo.root).replace(/\/+$/, '')
+  const root = await realPath($, dir === '' ? '/' : dir)
+  if (root === undefined) return undefined
   const path = `${dir}/${files.vision}`
+  const real = await realFileUnder($, path, root)
+  if (real === undefined) return undefined
   let text: string
   try {
-    text = await $.fs.read(path)
+    text = await $.fs.read(real)
   } catch {
     // Missing or unreadable.
     return undefined
   }
-  if (!files.readsAntiPatterns) return { path, text }
   const antiPatternsPath = `${dir}/${files.antiPatterns}`
+  const antiPatternsReal = await realFileUnder($, antiPatternsPath, root)
+  if (antiPatternsReal === undefined || antiPatternsReal === real) return { path, text }
   try {
-    return { path, text, antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsPath) } }
+    return { path, text, antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsReal) } }
   } catch {
     // No anti-patterns file, or an unreadable one: the vision alone.
     return { path, text }
   }
+}
+
+/** Where `path` lands, every link followed; undefined when it cannot be told. */
+async function realPath($: $, path: string): Promise<string | undefined> {
+  try {
+    return (await $.fs.stat(path, { resolve: true })).realPath
+  } catch {
+    return undefined
+  }
+}
+
+/** The real path of the file at `path` when it is a file under `root`. */
+async function realFileUnder($: $, path: string, root: string): Promise<string | undefined> {
+  let stat
+  try {
+    stat = await $.fs.stat(path, { resolve: true })
+  } catch {
+    return undefined
+  }
+  const real = stat.realPath
+
+  return stat.kind === 'file' && real !== undefined && isUnderRoot(real, root) ? real : undefined
 }
 
 /** The text that fills the `{{vision}}` field of a prompt. */

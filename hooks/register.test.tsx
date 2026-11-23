@@ -82,6 +82,15 @@ function world(
   const files: Record<string, string> = {
     '/work/repo/VISION.md': VISION,
   }
+  // Symbolic links: a path, or a folder above it, and where it leads.
+  const links: Record<string, string> = {}
+  const resolve = (path: string): string => {
+    for (const [from, to] of Object.entries(links)) {
+      if (path === from || path.startsWith(`${from}/`)) return resolve(to + path.slice(from.length))
+    }
+
+    return path
+  }
 
   on('session.id', () => ({ value: 'session-a' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
@@ -104,9 +113,28 @@ function world(
     if (e.path.endsWith('/prompts/learn.md')) return { value: LEARN_TEMPLATE }
     if (e.path.endsWith('/prompts/excerpt-head.md')) return { value: EXCERPT_HEAD }
     if (e.path.endsWith('/.claude-plugin/plugin.json')) return { value: '{"version":"0.1.0"}' }
-    const text = files[e.path]
+    const text = files[resolve(e.path)]
 
     return text === undefined ? { deny: 'no such file' } : { value: text }
+  })
+  on('fs.stat', (_, e) => {
+    const real = resolve(e.path)
+    const isFile = files[real] !== undefined
+    const isDir =
+      !isFile &&
+      (real === (options.root ?? '/work/repo') ||
+        Object.keys(files).some(key => key.startsWith(`${real}/`)))
+    if (!isFile && !isDir) return { deny: 'ENOENT' }
+
+    return {
+      value: {
+        kind: isFile ? 'file' : 'dir',
+        size: isFile ? (files[real] ?? '').length : 0,
+        mtimeMs: 0,
+        isLink: real !== e.path,
+        realPath: real,
+      },
+    }
   })
   on('model.fork', async (_, e) => {
     forks.push(e.prompt)
@@ -163,7 +191,7 @@ function world(
     return { value: undefined }
   })
 
-  return { clock, forks, submitted, files, toasts, completions, notified, models }
+  return { clock, forks, submitted, files, links, toasts, completions, notified, models }
 }
 
 async function personTypes($: Engine, text: string) {
@@ -1183,16 +1211,66 @@ test(
 )
 
 test(
-  'two names of the same file read it once, as the vision',
-  { options: { antiPatternsFile: './VISION.md' } },
+  'two names that lead to the same file read it once, as the vision',
+  { options: { antiPatternsFile: 'avoid.md' } },
   async ($, on) => {
-    const { forks } = world(on, () => 'verdict: none')
+    const { forks, files, links } = world(on, () => 'verdict: none')
+    links['/work/repo/avoid.md'] = '/work/repo/VISION.md'
 
     expect(await status($)).toContain('VISION.md: /work/repo/VISION.md\nChecks:')
     await command($, 'check')
     expect(forks[0]).not.toContain('# Anti-patterns:')
+
+    // Once it is a file of its own, it is read.
+    delete links['/work/repo/avoid.md']
+    files['/work/repo/avoid.md'] = ANTI_PATTERNS
+    expect(await status($)).toContain('avoid.md: /work/repo/avoid.md\nChecks:')
   },
 )
+
+test('a file that a link leads outside the project counts as not found', async ($, on) => {
+  const { forks, files, links } = world(on, () => 'verdict: none')
+  files['/elsewhere/ANTI-PATTERNS.md'] = '# Secret\n'
+  links['/work/repo/ANTI-PATTERNS.md'] = '/elsewhere/ANTI-PATTERNS.md'
+
+  // The anti-patterns file outside: the vision alone.
+  expect(await status($)).toContain('VISION.md: /work/repo/VISION.md\nChecks:')
+  await command($, 'check')
+  expect(forks[0]).not.toContain('# Secret')
+
+  // The vision file itself outside: no vision, and nothing is sent.
+  files['/elsewhere/VISION.md'] = '# Secret vision\n'
+  links['/work/repo/VISION.md'] = '/elsewhere/VISION.md'
+  expect(await status($)).toContain('VISION.md: not found.')
+  expect(await command($, 'check')).toBe('Check finished: did not run: no VISION.md found.')
+  expect(forks).toHaveLength(1)
+})
+
+test(
+  'a configured vision behind a linked folder outside the project is not read',
+  { options: { visionFile: 'docs/VISION.md' } },
+  async ($, on) => {
+    const { forks, files, links } = world(on, () => 'verdict: none')
+    files['/elsewhere/docs/VISION.md'] = '# Secret vision\n'
+    links['/work/repo/docs'] = '/elsewhere/docs'
+
+    expect(await status($)).toContain('docs/VISION.md: not found.')
+    expect(await command($, 'check')).toBe('Check finished: did not run: no docs/VISION.md found.')
+    expect(forks).toHaveLength(0)
+
+    // A link that stays inside the project is followed.
+    files['/work/repo/notes/VISION.md'] = VISION
+    links['/work/repo/docs'] = '/work/repo/notes'
+    expect(await status($)).toContain('docs/VISION.md: /work/repo/docs/VISION.md')
+  },
+)
+
+test('a project root whose real path cannot be told has no vision', async ($, on) => {
+  const { links } = world(on, () => 'verdict: none')
+  links['/work/repo'] = '/gone'
+
+  expect(await status($)).toContain('VISION.md: not found.')
+})
 
 test('cancel drops the draft', async ($, on) => {
   world(on, learnFork(), 'none', { messages: () => ROWS })

@@ -572,23 +572,11 @@ export function fileName(value: unknown, fallback: string): string {
   return kept.length === 0 ? fallback : kept.join('/')
 }
 
-/**
- * The file names from the plugin's options, each one checked by `fileName`.
- * `readsAntiPatterns` is false when both name the same file (compared without
- * case, as on a case-insensitive file system): that file is then read once,
- * as the vision.
- */
-export function fileNames(options: {
-  visionFile?: unknown
-  antiPatternsFile?: unknown
-}): FileNames & { readsAntiPatterns: boolean } {
-  const vision = fileName(options.visionFile, DEFAULT_VISION_FILE)
-  const antiPatterns = fileName(options.antiPatternsFile, DEFAULT_ANTI_PATTERNS_FILE)
-
+/** The file names from the plugin's options, each one checked by `fileName`. */
+export function fileNames(options: { visionFile?: unknown; antiPatternsFile?: unknown }): FileNames {
   return {
-    vision,
-    antiPatterns,
-    readsAntiPatterns: vision.toLowerCase() !== antiPatterns.toLowerCase(),
+    vision: fileName(options.visionFile, DEFAULT_VISION_FILE),
+    antiPatterns: fileName(options.antiPatternsFile, DEFAULT_ANTI_PATTERNS_FILE),
   }
 }
 
@@ -1308,18 +1296,63 @@ export function addAntiPattern(antiPatterns: string, n: number, sentence: string
   const bullet = `- ${sentence}`
   const lines = antiPatterns.split('\n')
   const own = new RegExp(`^#{1,6}\\s*${n}(?:[.)]|\\s|$)`)
-  const at = lines.findIndex(line => own.test(line))
+  // A heading inside a fenced code block is text, not a section.
+  const fenced = fencedLines(lines)
+  const at = lines.findIndex((line, i) => !fenced[i] && own.test(line))
   if (at < 0) {
     const kept = antiPatterns.replace(/\s+$/, '')
 
     return `${kept === '' ? '' : `${kept}\n\n`}## ${n}.\n\n${bullet}\n`
   }
-  const next = lines.findIndex((line, i) => i > at && ANY_HEADING.test(line))
+  const next = lines.findIndex((line, i) => i > at && !fenced[i] && ANY_HEADING.test(line))
   let last = (next < 0 ? lines.length : next) - 1
   while (last > at && (lines[last] ?? '').trim() === '') last -= 1
   const added = last === at ? ['', bullet] : [bullet]
 
   return [...lines.slice(0, last + 1), ...added, ...lines.slice(last + 1)].join('\n')
+}
+
+/**
+ * For each line, true when it lies in a fenced code block (``` or ~~~, up to
+ * three spaces in), the fence lines included. A block closes at a line of
+ * the same fence character, at least as long, and nothing else; one that
+ * never closes runs to the end.
+ */
+export function fencedLines(lines: readonly string[]): boolean[] {
+  let fence: string | undefined
+
+  return lines.map(line => {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1]
+    if (fence === undefined) {
+      if (marker === undefined) return false
+      fence = marker
+
+      return true
+    }
+    if (
+      marker !== undefined &&
+      marker[0] === fence[0] &&
+      marker.length >= fence.length &&
+      line.trim() === marker
+    ) {
+      fence = undefined
+    }
+
+    return true
+  })
+}
+
+/**
+ * True when `path` lies strictly under the directory `root`: both are real
+ * paths (every link followed). A trailing separator on the root does not
+ * count, the root itself is not under it, and `/r/app2` is not under `/r/app`.
+ */
+export function isUnderRoot(path: string, root: string): boolean {
+  const base = root.replace(/[\\/]+$/, '')
+  if (!path.startsWith(base) || path.length <= base.length + 1) return false
+  const sep = path[base.length]
+
+  return sep === '/' || sep === '\\'
 }
 
 /**

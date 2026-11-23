@@ -40,8 +40,10 @@ import {
   formatInstructions,
   holdsQuote,
   fileName,
+  fencedLines,
   fileNames,
   isCheckRunning,
+  isUnderRoot,
   isPersonMessage,
   isPersonOrigin,
   learnReport,
@@ -1113,6 +1115,29 @@ describe('the anti-patterns file', () => {
     )
   })
 
+  test('a heading inside a fenced code block is not a section', () => {
+    // A fenced "## 1." before the real section does not take the sentence.
+    const fencedFirst = '# Anti\n\n```markdown\n## 1. Example\n```\n\n## 1. Real\n\n- Never A.\n'
+    expect(addAntiPattern(fencedFirst, 1, 'Never B.')).toBe(`${fencedFirst}- Never B.\n`)
+    // A fenced heading does not end the section: the bullet goes after the block.
+    const fencedInside = '## 1. Real\n\n- Never A.\n\n~~~\n## 2. Example\n~~~\n\n## 2. Next\n'
+    expect(addAntiPattern(fencedInside, 1, 'Never B.')).toBe(
+      '## 1. Real\n\n- Never A.\n\n~~~\n## 2. Example\n~~~\n- Never B.\n\n## 2. Next\n',
+    )
+    // Only a fenced section: a new section is added.
+    expect(addAntiPattern('````\n## 1. Example\n```\n````\n', 1, 'Never B.')).toBe(
+      '````\n## 1. Example\n```\n````\n\n## 1.\n\n- Never B.\n',
+    )
+  })
+
+  test('fenced lines: both fence kinds, a longer close, an indented fence, an unclosed block', () => {
+    expect(fencedLines(['a', '```js', '# x', '```', 'b'])).toEqual([false, true, true, true, false])
+    expect(fencedLines(['~~~', '```', '~~~~', 'b'])).toEqual([true, true, true, false])
+    expect(fencedLines(['   ```', '# x', '``` js', '```', 'b'])).toEqual([true, true, true, true, false])
+    expect(fencedLines(['    ```', '# x'])).toEqual([false, false])
+    expect(fencedLines(['```', '# x'])).toEqual([true, true])
+  })
+
   test('with an anti-patterns file, a sentence for an invariant goes into the anti-patterns text', () => {
     expect(addDraftSentence(VISION, ANTI_PATTERNS, 'invariant 2', 'Never queue a mail.')).toEqual({
       text: visionField(VISION, addAntiPattern(ANTI_PATTERNS, 2, 'Never queue a mail.')),
@@ -1201,22 +1226,34 @@ describe('the configured file names', () => {
     expect(fileNames({})).toEqual({
       vision: DEFAULT_VISION_FILE,
       antiPatterns: DEFAULT_ANTI_PATTERNS_FILE,
-      readsAntiPatterns: true,
     })
     expect(fileNames({ visionFile: 'course.md', antiPatternsFile: '../avoid.md' })).toEqual({
       vision: 'course.md',
       antiPatterns: 'ANTI-PATTERNS.md',
-      readsAntiPatterns: true,
+    })
+    expect(fileNames({ antiPatternsFile: 'vision.md' })).toEqual({
+      vision: 'VISION.md',
+      antiPatterns: 'vision.md',
     })
   })
+})
 
-  test('two names of the same file read it once, as the vision', () => {
-    expect(fileNames({ visionFile: 'docs/course.md', antiPatternsFile: './docs/course.md' })).toEqual({
-      vision: 'docs/course.md',
-      antiPatterns: 'docs/course.md',
-      readsAntiPatterns: false,
-    })
-    expect(fileNames({ antiPatternsFile: 'vision.md' }).readsAntiPatterns).toBe(false)
+describe('a real path under the project root', () => {
+  test('a path under the root is under it, also with a trailing separator on the root', () => {
+    expect(isUnderRoot('/r/app/VISION.md', '/r/app')).toBe(true)
+    expect(isUnderRoot('/r/app/docs/VISION.md', '/r/app/')).toBe(true)
+    expect(isUnderRoot('/r/app/VISION.md', '/r/app//')).toBe(true)
+    expect(isUnderRoot('C:\\r\\app\\VISION.md', 'C:\\r\\app\\')).toBe(true)
+    expect(isUnderRoot('/VISION.md', '/')).toBe(true)
+  })
+
+  test('the root itself, a sibling with the same prefix, and a path outside are not', () => {
+    expect(isUnderRoot('/r/app', '/r/app')).toBe(false)
+    expect(isUnderRoot('/r/app/', '/r/app')).toBe(false)
+    expect(isUnderRoot('/r/app', '/r/app/')).toBe(false)
+    expect(isUnderRoot('/r/app2/VISION.md', '/r/app')).toBe(false)
+    expect(isUnderRoot('/r/VISION.md', '/r/app')).toBe(false)
+    expect(isUnderRoot('/elsewhere/VISION.md', '/r/app')).toBe(false)
   })
 })
 

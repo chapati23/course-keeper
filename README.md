@@ -87,7 +87,7 @@ Course keeper has two settings. Claude Code asks for them when you install the p
 | `visionFile` | `VISION.md` | The file that holds the vision. |
 | `antiPatternsFile` | `ANTI-PATTERNS.md` | The optional file that holds the acts to avoid. |
 
-Each value is a path relative to the place where course keeper looks for the vision: the root of the repository (the main working tree), or the project root outside a repository. Change a name when the project already has a file of that name that is about something else. An empty value, an absolute path, or a path with `..` or a backslash counts as the default. When both settings name the same file, course keeper reads it as the vision only. The rest of this page uses the default names.
+Each value is a path relative to the place where course keeper looks for the vision: the root of the repository (the main working tree), or the project root outside a repository. Change a name when the project already has a file of that name that is about something else. An empty value, an absolute path, or a path with `..` or a backslash counts as the default. Course keeper does not read a file that leads outside the project through a symbolic link; such a file counts as not found. When both settings lead to the same file, course keeper reads it as the vision only. The rest of this page uses the default names.
 
 ## What you see
 
