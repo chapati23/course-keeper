@@ -14,6 +14,10 @@ _Avoid_: mission, north star, principles
 One numbered, testable statement in the vision that a session must not contradict.
 _Avoid_: rule, principle, guideline
 
+**Case file**:
+An optional file beside the vision, kept as `VISION-CASES.md`, that holds the sentences that name acts to avoid, in one section for each invariant. An act named there breaks that invariant.
+_Avoid_: examples, appendix, rule book
+
 **Standing instruction**:
 A goal or an instruction that the person stated in a session and that stays in force beyond the task it was given with.
 _Avoid_: preference, constraint, reminder

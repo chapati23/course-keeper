@@ -540,11 +540,13 @@ function time(ms: number): string {
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
+  casesPath?: string,
 ): string {
   const lines = [
     visionPath === undefined
       ? 'VISION.md: not found. No checks run without it.'
       : `VISION.md: ${visionPath}`,
+    ...(casesPath === undefined ? [] : [`VISION-CASES.md: ${casesPath}`]),
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',
@@ -1221,6 +1223,76 @@ export function addSentence(
   }
 }
 
+export const CASES_HEADING = '# Cases: acts that break the invariants above'
+export const CASES_NOTE =
+  'The number of each section below is the number of the invariant it belongs to, ' +
+  'and an act named in a section is a deviation from that invariant.'
+
+/**
+ * The text that fills the `{{vision}}` field of every prompt: the vision,
+ * then the case file under its own heading. Without a case file, or with an
+ * empty one, it is the vision unchanged.
+ */
+export function visionField(vision: string, cases: string | undefined): string {
+  if (cases === undefined || cases.trim() === '') return vision
+
+  return `${vision.replace(/\s+$/, '')}\n\n${CASES_HEADING}\n${CASES_NOTE}\n\n${cases}`
+}
+
+const ANY_HEADING = /^#{1,6}(\s|$)/
+
+/**
+ * The case text with the sentence added as a bullet at the end of the
+ * section of invariant n: from its heading to the line before the next
+ * heading, or to the end. Trailing blank lines stay after the bullet. When
+ * the case text has no such section, a new section `## n.` is appended.
+ */
+export function addCase(cases: string, n: number, sentence: string): string {
+  const bullet = `- ${sentence}`
+  const lines = cases.split('\n')
+  const own = new RegExp(`^#{1,6}\\s*${n}[.)](\\s|$)`)
+  const at = lines.findIndex(line => own.test(line))
+  if (at < 0) {
+    const kept = cases.replace(/\s+$/, '')
+
+    return `${kept === '' ? '' : `${kept}\n\n`}## ${n}.\n\n${bullet}\n`
+  }
+  const next = lines.findIndex((line, i) => i > at && ANY_HEADING.test(line))
+  let last = (next < 0 ? lines.length : next) - 1
+  while (last > at && (lines[last] ?? '').trim() === '') last -= 1
+  const added = last === at ? ['', bullet] : [bullet]
+
+  return [...lines.slice(0, last + 1), ...added, ...lines.slice(last + 1)].join('\n')
+}
+
+/**
+ * The `{{vision}}` field with the draft's sentence added. With a case file
+ * and the place `invariant <n>`, the sentence goes into the case text under
+ * invariant n (`inCases`). Otherwise it goes into the vision as
+ * `addSentence` places it.
+ */
+export function addDraftSentence(
+  vision: string,
+  cases: string | undefined,
+  place: string,
+  sentence: string,
+): { text: string; target: number; isNew: boolean; inCases: boolean } {
+  const wanted = /^invariant (\d+)$/.exec(place)
+  if (cases !== undefined && wanted) {
+    const target = Number(wanted[1])
+
+    return {
+      text: visionField(vision, addCase(cases, target, sentence)),
+      target,
+      isNew: false,
+      inCases: true,
+    }
+  }
+  const added = addSentence(vision, place, sentence)
+
+  return { ...added, text: visionField(added.text, cases), inCases: false }
+}
+
 /** What one excerpt check gave: a reply, or why there is none. */
 export type ExcerptResult =
   | { kind: 'reply'; reply: CheckReply }
@@ -1387,8 +1459,19 @@ function placeText(target: number, isNew: boolean): string {
   return isNew ? 'as a new invariant' : `invariant ${target}`
 }
 
+/** Where the draft's sentence goes, as a report names it. */
+function draftHeading(target: number, isNew: boolean, inCases: boolean): string {
+  return inCases
+    ? `Draft sentence for VISION-CASES.md, under invariant ${target}`
+    : `Draft sentence for VISION.md, ${placeText(target, isNew)}`
+}
+
 /** The lines that close a report: what the draft allows, its source, the notes. */
-function closingLines(draft: CourseKeeperDraft, version: string | undefined): string[] {
+function closingLines(
+  draft: CourseKeeperDraft,
+  version: string | undefined,
+  inCases: boolean,
+): string[] {
   const lines = draft.allowed === '' ? [] : [`Must stay allowed: ${draft.allowed}`]
   const date = new Date(draft.draftedAt).toISOString().slice(0, 10)
   lines.push(
@@ -1397,7 +1480,9 @@ function closingLines(draft: CourseKeeperDraft, version: string | undefined): st
       `${draft.model || "the session's model"}` +
       `${version === undefined ? '' : `; course keeper ${version}`}.`,
     '',
-    'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+    inCases
+      ? 'This is a draft for the owners of VISION-CASES.md and VISION.md. Course keeper does not change the files.'
+      : 'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
     '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
     '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
     '  too broad and 4 too narrow.',
@@ -1416,10 +1501,13 @@ export function learnReport(input: {
   verify: ExcerptResult
   earlier: EarlierTest
   version?: string
+  /** True when the sentence goes into VISION-CASES.md. */
+  inCases?: boolean
 }): string {
   const { draft, target, isNew, control, verify, earlier, version } = input
+  const inCases = input.inCases === true
   const lines = [
-    `Draft sentence for VISION.md, ${placeText(target, isNew)}:`,
+    `${draftHeading(target, isNew, inCases)}:`,
     `  ${draft.sentence}`,
     '',
   ]
@@ -1437,7 +1525,7 @@ export function learnReport(input: {
   lines.push(
     `Test on the turn you corrected: ${verifyLine(verify, target)}`,
     earlierLine(earlier),
-    ...closingLines(draft, version),
+    ...closingLines(draft, version, inCases),
   )
 
   return lines.join('\n')
@@ -1452,15 +1540,18 @@ export function untestedReport(input: {
   target: number
   isNew: boolean
   version?: string
+  /** True when the sentence goes into VISION-CASES.md. */
+  inCases?: boolean
 }): string {
   const { draft, target, isNew, version } = input
+  const inCases = input.inCases === true
 
   return [
     'The turn you corrected is too long for the test. The agent\'s words fall in the part ' +
       'that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.',
     '',
-    `Draft sentence for VISION.md, ${placeText(target, isNew)} (not tested):`,
+    `${draftHeading(target, isNew, inCases)} (not tested):`,
     `  ${draft.sentence}`,
-    ...closingLines(draft, version),
+    ...closingLines(draft, version, inCases),
   ].join('\n')
 }

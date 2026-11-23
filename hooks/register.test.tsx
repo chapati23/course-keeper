@@ -1065,6 +1065,73 @@ test('learn yes stops when the check already alerts on the turn with today\'s vi
   expect(await command($, 'learn yes')).toBe(NO_DRAFT)
 })
 
+const CASES = '# Cases\n\n## 1. One service sets every price\n\n- Never compute a discount in the client.\n'
+
+test('the case file beside VISION.md goes into the check and the status', async ($, on) => {
+  const { clock, forks, files } = world(on, () => 'verdict: none')
+  files['/work/repo/VISION-CASES.md'] = CASES
+
+  expect(await status($)).toContain(
+    'VISION.md: /work/repo/VISION.md\nVISION-CASES.md: /work/repo/VISION-CASES.md\n',
+  )
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+  expect(forks[0]).toContain(
+    'Vision:\n# Example\n\n1. One service sets every price.\n\n' +
+      '# Cases: acts that break the invariants above\n',
+  )
+  expect(forks[0]).toContain(`invariant.\n\n${CASES}\nInstructions:`)
+
+  // Without VISION.md the case file alone runs nothing.
+  delete files['/work/repo/VISION.md']
+  const shown = await status($)
+  expect(shown).toContain('VISION.md: not found.')
+  expect(shown).not.toContain('VISION-CASES.md')
+  await $.turn.complete({ ...END, turnId: 'turn-2' })
+  await settle(clock)
+  expect(forks).toHaveLength(1)
+})
+
+test('with a case file, a sentence for an invariant is tested in the case file', async ($, on) => {
+  let reply = DRAFT
+  const { forks, files, completions } = world(
+    on,
+    prompt => (prompt.includes('Catch:') ? reply : 'verdict: none'),
+    'none',
+    {
+      messages: () => ROWS,
+      complete: excerptReplies({
+        failing: ['verdict: none', deviation('I will add a fallback price table in the client.')],
+      }),
+    },
+  )
+  files['/work/repo/VISION-CASES.md'] = CASES
+
+  await command($, 'learn')
+  expect(forks[0]).toContain(`Vision to learn: # Example\n\n1. One service sets every price.\n\n# Cases:`)
+  expect(forks[0]).toContain(CASES)
+  const report = await command($, 'learn yes')
+  expect(report).toContain(`Draft sentence for VISION-CASES.md, under invariant 1:\n  ${SENTENCE}\n`)
+  expect(report).toContain(
+    'This is a draft for the owners of VISION-CASES.md and VISION.md. Course keeper does not change the files.',
+  )
+  const verify = completions.find(p => p.includes(SENTENCE))
+  expect(verify).toContain(
+    'Vision:\n# Example\n\n1. One service sets every price.\n\n# Cases:',
+  )
+  expect(verify).toContain(`- Never compute a discount in the client.\n- ${SENTENCE}\n`)
+
+  // A new invariant still goes into VISION.md, and the report says so.
+  reply = DRAFT.replace('place: invariant 1', 'place: new')
+  await command($, 'learn')
+  const again = await command($, 'learn yes')
+  expect(again).toContain('Draft sentence for VISION.md, as a new invariant:')
+  expect(again).toContain('This is a draft for the owners of VISION.md. Course keeper does not change the file.')
+  expect(completions.at(-1)).toContain(`2. ${SENTENCE}\n\n# Cases:`)
+})
+
 test('cancel drops the draft', async ($, on) => {
   world(on, learnFork(), 'none', { messages: () => ROWS })
 
