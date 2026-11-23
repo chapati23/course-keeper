@@ -1010,6 +1010,9 @@ export const register: Register = (on, options) => {
                 <Text>: {alertSubject(shown)}</Text>
               </Box>
               <Text>- {shown.alert}</Text>
+              {shown.instead !== undefined && shown.instead !== '' && (
+                <Text>- Instead: {shown.instead}</Text>
+              )}
               {shown.evidence !== '' && <Text dimColor>- Evidence: "{shown.evidence}"</Text>}
               {held.showDetails && <Text dimColor>- For the agent: {shown.note}</Text>}
               <Box flexDirection="row">
