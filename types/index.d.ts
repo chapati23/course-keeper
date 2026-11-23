@@ -31,6 +31,31 @@ export type CourseKeeperCheck = {
   outcome: string
 }
 
+/**
+ * A draft sentence for VISION.md that `/course-keeper learn` made and that
+ * waits for the person's `/course-keeper learn yes`.
+ */
+export type CourseKeeperDraft = {
+  /** The agent's words that show the act; found in the agent's replies. */
+  quote: string
+  /** One plain sentence: what the agent did. */
+  act: string
+  /** The forms the act can take, as the draft listed them. */
+  forms: string
+  /** The draft's variant of the act. */
+  variant: string
+  /** `invariant <number>` or `new`. */
+  place: string
+  /** The sentence; it starts with "Never". */
+  sentence: string
+  /** One sound act close to the forbidden one that the sentence allows. */
+  allowed: string
+  /** When the draft was made, in milliseconds since the epoch. */
+  draftedAt: number
+  /** The session's model when the draft was made, as `/model` shows it. */
+  model: string
+}
+
 /** Everything course keeper keeps for one session. */
 export type CourseKeeperSession = {
   /** The record's shape version. */
@@ -60,6 +85,16 @@ export type CourseKeeperSession = {
    * reload does not let a second check start beside the first.
    */
   checkingSince: number | null
+  /**
+   * When the learn step in flight started, in milliseconds since the epoch.
+   * Absent or null when none runs, and in a record written before it existed.
+   */
+  learningSince?: number | null
+  /**
+   * The draft that waits for `/course-keeper learn yes`. Absent when there is
+   * none, and in a record written before it existed.
+   */
+  learn?: CourseKeeperDraft
 }
 
 declare module 'claude-code' {

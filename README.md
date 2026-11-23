@@ -83,18 +83,22 @@ Course keeper also notes standing instructions: goals or instructions you state 
 - `/course-keeper forget <n>` removes standing instruction n. Later checks are told not to enforce it.
 - `/course-keeper check` runs a check now.
 - `/course-keeper off` and `/course-keeper on` switch the checks for this session. Standing instructions are still noted while checks are off.
+- `/course-keeper learn` drafts one sentence for VISION.md after you corrected the agent on something that no alert flagged. A copy of the session finds the agent's reply that you corrected and drafts a sentence that starts with "Never". Course keeper first shows the act and the agent's words, not the sentence. When the agent's words are not found word for word in its replies, it shows nothing of the draft. `/course-keeper learn <what the agent did wrong>` names the act in your words.
+- `/course-keeper learn yes` accepts the act. Course keeper tests the sentence on excerpts of this session and shows it with the results: whether the check alerts on the turn you corrected with the sentence added, and whether it raises new alerts on up to 3 earlier turns. When the check already alerts on that turn with today's vision, no sentence is offered. `/course-keeper learn cancel` drops the draft.
+- Course keeper never writes VISION.md and sends nothing to the agent. The draft is for the owners of the vision.
 
 ## What is sent to the model, and when
 
 - **A check**, at the end of each main-agent turn that ends with an answer. Course keeper asks one question over a copy of the session: the session's own model gets the conversation as the main thread last sent it, plus the agent's final answer of the turn (the copy does not hold it yet) and the check prompt (`prompts/check.md`) with the text of VISION.md, the standing instructions and this session's alerts. The copy has no tools and gives one reply. At most one check runs at a time in a session.
 - **A standing-instruction check**, at each prompt you type that is not a slash command and has at least 12 characters. The `haiku` model gets `prompts/extract.md` and your whole prompt as it entered the session (after any other plugin changed or dropped it), and nothing else. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
 - **Tell the agent** sends the note to the agent only when you press the button.
+- **A learn step**, only when you run `/course-keeper learn`. The session's own model gets a copy of the session (a fork, as for a check) with the learn prompt (`prompts/learn.md`), the text of VISION.md and your words, if you gave any. After `/course-keeper learn yes`, separate calls send excerpts of the session to the session's model: the summary that replaced the earlier conversation, if there is one, your messages, and the rows of one turn. Each call also holds the check prompt (`prompts/check.md`, with `prompts/excerpt-head.md` in place of its head), the text of VISION.md with or without the draft sentence, and the standing instructions.
 
 Course keeper keeps the standing instructions and alerts of the last 20 sessions in its store, a file under your Claude Code configuration directory. It sends them nowhere else.
 
 ## What it costs
 
-Both calls are billed to the session's credentials and count in `/usage`. A check asks the API to serve the conversation from the session's prompt cache; when that cache entry has lapsed, or after `/model`, it pays for the whole conversation again. The standing-instruction check is one `haiku` call per prompt; it holds your whole prompt, so a long paste costs more. Cost figures in Claude Code are estimates.
+Both calls are billed to the session's credentials and count in `/usage`. A check asks the API to serve the conversation from the session's prompt cache; when that cache entry has lapsed, or after `/model`, it pays for the whole conversation again. The standing-instruction check is one `haiku` call per prompt; it holds your whole prompt, so a long paste costs more. A learn step is one fork, then 2 to 8 excerpt calls on the session's model. No prompt cache serves an excerpt call, so each one pays for its whole excerpt. Cost figures in Claude Code are estimates.
 
 ## Limits
 
@@ -102,6 +106,8 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 - VS Code has no row above the prompt. There, and on any surface without the row, an alert still exists: `/course-keeper` shows it.
 - Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents. A session counts as having a person once a prompt arrives from the terminal prompt, from Remote Control, or from its owner in Slack.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
+- The learn step tests a sentence only on excerpts of this session: the turn you corrected and up to 3 earlier turns. An alert in the test does not prove that the sentence names the right act. Whether an agent that reads the sentence avoids the act is not measured.
+- The learn step finds the turn you corrected by the agent's words. After a compaction removed that turn, `/course-keeper learn yes` keeps nothing.
 
 ## Turn it off
 
