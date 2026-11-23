@@ -20,6 +20,8 @@ import {
   addInstructions,
   addSentence,
   addWithdrawn,
+  alertHeadline,
+  alertSubject,
   applyReply,
   catchText,
   clean,
@@ -39,6 +41,7 @@ import {
   formatAlerts,
   formatInstructions,
   holdsQuote,
+  invariantTitle,
   fileName,
   fencedLines,
   fileNames,
@@ -246,7 +249,7 @@ describe('the check prompt', () => {
       '# Check\n\n1. One service sets every price.\n\n1. never post without my yes\n\n' +
         '1. invariant 2: The session adds a second pricing path. Evidence: ' +
         '"I will add a fallback price table in the client.". ' +
-        "The person's answer: intended (the person wanted this).\n",
+        "The person's answer: false alarm (the person says this is no deviation, or wanted it).\n",
     )
   })
 
@@ -326,6 +329,14 @@ describe('the duplicate-alert rule', () => {
     ])
   })
 
+  test('a new alert keeps the title it is given', () => {
+    const reply = parseCheckReply(DEVIATION)
+    expect(applyReply(emptyRecord(), reply, 2000, 'One service sets every price').shown?.title).toBe(
+      'One service sets every price',
+    )
+    expect(applyReply(emptyRecord(), reply, 2000).shown).not.toHaveProperty('title')
+  })
+
   test('none and a malformed reply record the outcome alone', () => {
     expect(applyReply(emptyRecord(), { verdict: 'none' }, 5).record.lastCheck).toEqual({
       at: 5,
@@ -333,6 +344,59 @@ describe('the duplicate-alert rule', () => {
     })
     expect(applyReply(emptyRecord(), undefined, 5).outcome).toBe(
       'the reply was malformed',
+    )
+  })
+})
+
+describe('the headline', () => {
+  const VISION = [
+    '# Vision',
+    '',
+    'A command-line tool that turns timesheets into invoices.',
+    '',
+    '1. One module computes every amount. No other code does arithmetic on money.',
+    '2. **The tool never sends an invoice.** It writes files; the person sends them.',
+    `3. Every change keeps the test suite green on the three supported platforms${' and more'.repeat(5)}`,
+    '',
+  ].join('\n')
+
+  test("an invariant's title is its bold lead, else its first sentence, without the period", () => {
+    expect(invariantTitle(VISION, 'invariant 1')).toBe('One module computes every amount')
+    expect(invariantTitle(VISION, 'invariant 2')).toBe('The tool never sends an invoice')
+  })
+
+  test('a long title is cut to 60 characters with an ellipsis', () => {
+    const title = invariantTitle(VISION, 'invariant 3')
+    expect(title).toHaveLength(60)
+    expect(title?.endsWith('…')).toBe(true)
+  })
+
+  test('no title for a missing item, an instruction, or a title that is empty', () => {
+    expect(invariantTitle(VISION, 'invariant 9')).toBeUndefined()
+    expect(invariantTitle(VISION, 'instruction "1. never"')).toBeUndefined()
+    expect(invariantTitle('1. **  **', 'invariant 1')).toBeUndefined()
+  })
+
+  test('an invariant reference names the invariant and its title when the alert has one', () => {
+    expect(alertHeadline(alertOf({ title: 'One service sets every price' }))).toBe(
+      'Course keeper: this session breaks invariant 2 (One service sets every price)',
+    )
+    expect(alertHeadline(alertOf())).toBe('Course keeper: this session breaks invariant 2')
+  })
+
+  test('an instruction reference quotes the words, cut to 60 characters', () => {
+    expect(alertSubject(alertOf({ reference: 'instruction "never post without my yes"' }))).toBe(
+      'this session breaks your instruction "never post without my yes"',
+    )
+    const long = `never ${'post '.repeat(20)}`.trim()
+    expect(alertSubject(alertOf({ reference: `instruction "${long}"` }))).toBe(
+      `this session breaks your instruction "${clean(long, 60)}"`,
+    )
+  })
+
+  test('another reference is named as it stands', () => {
+    expect(alertSubject(alertOf({ reference: 'rule x', title: 'ignored' }))).toBe(
+      'this session breaks rule x',
     )
   })
 })
@@ -506,6 +570,18 @@ describe('stored records', () => {
       checkingSince: null,
     })
     expect(normalizeRecord({ v: 1, checkingSince: 7 }).checkingSince).toBe(7)
+  })
+
+  test("an alert's title is read cleaned and cut; a bad or empty one is dropped", () => {
+    const read = normalizeRecord({
+      v: 1,
+      current: { ...alertOf(), title: `\x1b[31mOne${' word'.repeat(20)}` },
+      alerts: [{ ...alertOf(), title: 7 }, { ...alertOf(), title: ' ' }, alertOf()],
+    })
+
+    expect(read.current?.title).toBe(clean(`One${' word'.repeat(20)}`, 60))
+    expect(read.current?.title?.endsWith('…')).toBe(true)
+    for (const alert of read.alerts) expect(alert).not.toHaveProperty('title')
   })
 
   test('withdrawn instructions are read cleaned, and only the newest 30', () => {

@@ -91,14 +91,23 @@ Each value is a path relative to the place where course keeper looks for the vis
 
 ## What you see
 
-When a check finds a deviation, a row above the prompt shows the invariant or the instruction, one sentence about the deviation, and four buttons:
+When a check finds a deviation, a row above the prompt shows it. For example, in the timesheet project above:
 
-- `1 Details` shows or hides the evidence (a quote from the agent) and the note.
+```
+▲ Course keeper: this session breaks invariant 1 (One module computes every amount)
+- The session rounds the total in the exporter, which contradicts invariant 1.
+- Evidence: "I will round the total in the exporter before it writes the file."
+1: Details · 2: Tell the agent · 3: False alarm · 4: Dismiss
+```
+
+The first line names the invariant and its title, or quotes the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it. The next lines give one sentence about the deviation and the evidence, a quote from the agent. The row has four buttons:
+
+- `1 Details` shows or hides one more line: the note, the text that "Tell the agent" sends.
 - `2 Tell the agent` sends the note to the agent as a message from the plugin.
-- `3 Intended` records that you wanted this, so the check does not raise it again.
-- `0 Dismiss` closes the alert.
+- `3 False alarm` closes the alert and records that this is no deviation, or that you wanted it. Later checks are told so, and do not raise it again.
+- `4 Dismiss` closes the alert.
 
-Press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. Course keeper also raises a desktop notification where Claude Code offers one.
+Press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. Course keeper also raises a desktop notification where Claude Code offers one. It has the first line of the row as its title and the sentence about the deviation as its text.
 
 Course keeper also notes standing instructions: goals or instructions you state in a prompt that stay in force beyond one task. It shows a short notice when it adds one.
 

@@ -16,6 +16,8 @@ import {
   addInstructions,
   addWithdrawn,
   addedNotice,
+  alertHeadline,
+  alertSubject,
   alertsOn,
   answerCurrent,
   applyReply,
@@ -37,6 +39,7 @@ import {
   forgetInstruction,
   formatAlerts,
   formatInstructions,
+  invariantTitle,
   isCheckRunning,
   isUnderRoot,
   isPersonOrigin,
@@ -386,9 +389,13 @@ async function runCheck(
   }
 
   const parsed = parseCheckReply(reply.text)
+  // The title comes from the vision as this check read it, so drawing the
+  // row reads no file.
+  const title =
+    parsed?.verdict === 'deviation' ? invariantTitle(vision.text, parsed.reference) : undefined
   const now = await $.clock.now()
   let outcome = ''
-  let shown: string | undefined
+  let shown: CourseKeeperAlert | undefined
   await change($, id, r => {
     // A check that took longer than CHECK_STALE_MS lost its in-flight mark,
     // and a newer check may have started and shown its own alert since.
@@ -408,15 +415,15 @@ async function runCheck(
 
       return done.record
     }
-    const done = applyReply(r, parsed, now)
+    const done = applyReply(r, parsed, now, title)
     outcome = done.outcome
-    shown = done.shown?.alert
+    shown = done.shown
 
     return done.record
   })
   if (shown !== undefined) {
     try {
-      await $.ui.notify(shown, { title: 'Course keeper' })
+      await $.ui.notify(shown.alert, { title: alertHeadline(shown) })
     } catch {
       // No notification on this surface, or it was refused: the band shows it.
     }
@@ -992,17 +999,20 @@ export const register: Register = (on, options) => {
         if (shown !== null) {
           const { Box, Button, Text } = $.ui.resolve(e)
           const at = shown.shownAt
+          // Text between the plain Buttons only separates them: it takes no
+          // focus, and each Button keeps its hotkey.
+          const dot = <Text dimColor> · </Text>
           tree = (
             <Box flexDirection="column">
               <Box flexDirection="row">
                 <Text color="warning">▲ </Text>
                 <Text bold>Course keeper</Text>
-                <Text dimColor> · {shown.reference}</Text>
+                <Text>: {alertSubject(shown)}</Text>
               </Box>
-              <Text>{shown.alert}</Text>
-              {held.showDetails && <Text dimColor>Evidence: "{shown.evidence}"</Text>}
-              {held.showDetails && <Text dimColor>Note: {shown.note}</Text>}
-              <Box flexDirection="row" gap={2}>
+              <Text>- {shown.alert}</Text>
+              {shown.evidence !== '' && <Text dimColor>- Evidence: "{shown.evidence}"</Text>}
+              {held.showDetails && <Text dimColor>- For the agent: {shown.note}</Text>}
+              <Box flexDirection="row">
                 <Button
                   key="details"
                   plain
@@ -1016,6 +1026,7 @@ export const register: Register = (on, options) => {
                     ).catch(() => undefined)
                   }
                 />
+                {dot}
                 <Button
                   key="tell"
                   plain
@@ -1023,19 +1034,21 @@ export const register: Register = (on, options) => {
                   label="Tell the agent"
                   onPress={() => tell($, id, at).catch(() => undefined)}
                 />
+                {dot}
                 <Button
-                  key="intended"
+                  key="false-alarm"
                   plain
                   hotkey="3"
-                  label="Intended"
+                  label="False alarm"
                   onPress={() =>
                     answer($, id, at, 'intended').catch(() => undefined)
                   }
                 />
+                {dot}
                 <Button
                   key="dismiss"
                   plain
-                  hotkey="0"
+                  hotkey="4"
                   label="Dismiss"
                   role="dismiss"
                   onPress={() =>
