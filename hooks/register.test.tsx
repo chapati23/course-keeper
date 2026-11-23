@@ -1353,6 +1353,30 @@ test('the excerpt checks get no standing instructions', async ($, on) => {
   }
 })
 
+test('the excerpt checks are told not to enforce a withdrawn instruction', async ($, on) => {
+  const { clock, completions } = world(on, learnFork(), '- keep prices in the service, always', {
+    messages: () => ROWS,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+  })
+
+  await personTypes($, 'keep prices in the service, always')
+  await settle(clock)
+  expect(await command($, 'forget 1')).toBe(
+    'Standing instruction 1 removed: "keep prices in the service, always"',
+  )
+  await command($, 'learn')
+  await command($, 'learn yes')
+  const excerpts = completions.filter(p => p.includes('Excerpt head.'))
+  expect(excerpts).toHaveLength(3)
+  for (const prompt of excerpts) {
+    expect(prompt).toContain(
+      'Instructions:\nNone listed. Use what the person said in this session.\n\n' +
+        'Withdrawn by the person; do not enforce these:\n' +
+        '- keep prices in the service, always\nAlerts:',
+    )
+  }
+})
+
 test('learn yes tests the turn the draft found, not a later reply that repeats the quote', async ($, on) => {
   let rows = ROWS
   const { completions } = world(on, learnFork(), 'none', {
@@ -1410,6 +1434,65 @@ test('a turn too long for the excerpt is not tested when the agent\'s words fall
   expect(answer).toContain('This is a draft for the owners of VISION.md. Course keeper does not change the file.')
   expect(completions).toHaveLength(0)
   expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('a person message that repeats the agent\'s words does not make a long turn testable', async ($, on) => {
+  const quote = 'I will add a fallback price table in the client.'
+  const long = ROWS.map((r, k) =>
+    k === 2
+      ? { ...r, text: `Now add the checkout. Never say "${quote}"` }
+      : k === 3
+        ? { ...r, text: `${'x'.repeat(30000)} ${quote} ${'y'.repeat(50000)}` }
+        : r,
+  )
+  const { completions } = world(on, learnFork(), 'none', { messages: () => long })
+
+  expect(await command($, 'learn')).toBe(SHOWN)
+  expect(await command($, 'learn yes')).toContain(
+    "The turn you corrected is too long for the test. The agent's words fall in the part that the excerpt leaves out",
+  )
+  expect(completions).toHaveLength(0)
+})
+
+test('cancel during learn yes stops its calls and keeps nothing', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+    completeWait: n => (n === 1 ? gate : undefined),
+  })
+
+  await command($, 'learn')
+  const first = command($, 'learn yes')
+  await settle(clock)
+  expect(await command($, 'learn cancel')).toBe('The draft sentence is dropped.')
+  release()
+  expect(await first).toBe('A newer learn request replaced this one.')
+  // Only the control call ran.
+  expect(completions).toHaveLength(1)
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('cancel during the draft fork keeps the draft from being saved', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    forkWait: n => (n === 1 ? gate : undefined),
+  })
+
+  const first = command($, 'learn')
+  await settle(clock)
+  expect(await command($, 'learn cancel')).toBe('The learn step in flight is cancelled.')
+  release()
+  expect(await first).toBe('A newer learn request replaced this one.')
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+  expect(await command($, 'learn cancel')).toBe(NO_DRAFT)
 })
 
 test('a learn request that lost its mark does not save its draft over a newer one', async ($, on) => {

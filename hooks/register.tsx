@@ -27,6 +27,7 @@ import {
   draftText,
   earlierTurns,
   excerptCheckPrompt,
+  excerptKeepsQuote,
   failingRow,
   failingTurnAt,
   fillCheckPrompt,
@@ -35,7 +36,6 @@ import {
   forgetInstruction,
   formatAlerts,
   formatInstructions,
-  holdsQuote,
   isCheckRunning,
   isPersonOrigin,
   learnReport,
@@ -482,15 +482,23 @@ async function learn($: $, words: string): Promise<string> {
   const verb = words.toLowerCase()
 
   if (verb === 'cancel') {
+    // Cancel also clears the in-flight mark. A learn step in flight then
+    // keeps nothing and makes no further calls.
+    const now = await $.clock.now()
     let had = false
+    let wasRunning = false
     await change($, id, r => {
       had = r.learn !== undefined
+      wasRunning = isCheckRunning(r.learningSince ?? null, now)
+      const rest = withoutDraft(r)
 
-      return withoutDraft(r)
+      return (r.learningSince ?? null) === null ? rest : { ...rest, learningSince: null }
     })
     await saving
 
-    return had ? 'The draft sentence is dropped.' : NO_DRAFT
+    if (had) return 'The draft sentence is dropped.'
+
+    return wasRunning ? 'The learn step in flight is cancelled.' : NO_DRAFT
   }
   if (verb === 'yes' && (await load($, id)).record.learn === undefined) return NO_DRAFT
 
@@ -521,6 +529,23 @@ async function learn($: $, words: string): Promise<string> {
       r.learningSince === started ? { ...r, learningSince: null } : r,
     ).catch(() => undefined)
   }
+}
+
+/**
+ * True while the learn step that started at `started` holds the in-flight
+ * mark. A plain read can show the record as this dispatch last saw it, so
+ * the record is written back when it looks owned: a write that another
+ * write beat reads the record again.
+ */
+async function ownsMark($: $, id: string, started: number): Promise<boolean> {
+  let isOwn = false
+  await change($, id, r => {
+    isOwn = r.learningSince === started
+
+    return isOwn ? { ...r } : r
+  })
+
+  return isOwn
 }
 
 /** Step one: a fork drafts the sentence; its quote must be the agent's. */
@@ -634,8 +659,9 @@ async function testDraft(
   }
   const added = addSentence(vision, draft.place, draft.sentence)
   // The excerpt leaves out the middle of a long turn. When the agent's words
-  // fall there, no check can see them, and no model is called.
-  if (!holdsQuote(sessionExcerpt(rows, failing), draft.quote)) {
+  // fall there, no check can see them, and no model is called. Only the
+  // agent's rows count: the person can repeat the words in a message.
+  if (!excerptKeepsQuote(rows, failing, draft.quote)) {
     const version = await pluginVersion($)
 
     return drop(untestedReport({ draft, target: added.target, isNew: added.isNew, version }))
@@ -656,8 +682,9 @@ async function testDraft(
   ])
   // No standing instructions: the list held now can hold one that the
   // person's correction created. The person's messages in each excerpt
-  // show what was in force at that turn.
-  const instructions = formatInstructions([])
+  // show what was in force at that turn. The withdrawn instructions go in,
+  // so the check does not enforce them from those messages again.
+  const instructions = formatInstructions([], held.withdrawn)
   const ask = async (turn: Turn, text: string): Promise<ExcerptResult> => {
     const prompt = excerptCheckPrompt(
       template,
@@ -684,6 +711,8 @@ async function testDraft(
   // invariant that the sentence would join. An alert on another invariant
   // or an instruction is another matter of the same turn: the test goes on.
   const control = await ask(failing, vision)
+  // A cancel or a newer request since the start: no more calls.
+  if (!(await ownsMark($, id, started))) return REPLACED
   if (
     control.kind === 'reply' &&
     control.reply.verdict === 'deviation' &&

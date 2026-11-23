@@ -22,6 +22,7 @@ import {
   earlierTurns,
   emptyRecord,
   excerptCheckPrompt,
+  excerptKeepsQuote,
   failingRow,
   failingTurnAt,
   fillCheckPrompt,
@@ -871,10 +872,24 @@ describe('turns and excerpts', () => {
     )
   })
 
-  test('person messages are distinct and come up to the turn\'s first row', () => {
+  test('person messages come in order up to the turn\'s first row, repeats included', () => {
     const text = sessionExcerpt(rows, { start: 9, end: 10 })
     expect(text).toContain(
-      '## Messages the person sent, oldest first\n\nPlan the export.\n\nNo, the module computes every amount.\n\n##',
+      '## Messages the person sent, oldest first\n\nPlan the export.\n\nPlan the export.\n\n' +
+        'No, the module computes every amount.\n\n##',
+    )
+    // A message repeated to reinstate an instruction keeps its later place.
+    const again: SessionMessage[] = [
+      row('user', 'Never use npm.'),
+      row('assistant', 'Noted.'),
+      row('user', 'Use npm this once.'),
+      row('assistant', 'Done.'),
+      row('user', 'Never use npm.'),
+      row('assistant', 'Noted again.'),
+    ]
+    expect(sessionExcerpt(again, { start: 4, end: 5 })).toContain(
+      '## Messages the person sent, oldest first\n\n' +
+        'Never use npm.\n\nUse npm this once.\n\nNever use npm.\n\n##',
     )
     expect(text).toContain("## The agent's latest turn\n\nINPUT: No, the module computes every amount.\n\nAGENT: You are right.")
     expect(sessionExcerpt(rows, { start: 0, end: 0 })).toBe(
@@ -904,6 +919,49 @@ describe('turns and excerpts', () => {
     expect(text).toContain(`[tool result: ${'r'.repeat(1500)}]`)
     const turn = text.split("## The agent's latest turn\n\n")[1] ?? ''
     expect(turn.length).toBe(20000 + 41 + 40000)
+  })
+
+  test('only the agent rows that the excerpt keeps of a turn count for the quote', () => {
+    const quote = 'I will round the total.'
+    const turn = { start: 0, end: 1 }
+    expect(excerptKeepsQuote([row('user', 'Plan.'), row('assistant', quote)], turn, quote)).toBe(true)
+    // The person's message and an input row hold the words; the agent's row does not.
+    expect(
+      excerptKeepsQuote([row('user', `You wrote: ${quote}`), row('assistant', 'Other words.')], turn, quote),
+    ).toBe(false)
+    expect(
+      excerptKeepsQuote(
+        [
+          row('assistant', '', { toolUses: [{ tool_use_id: 't', tool: 'Read', input: {} }] }),
+          row('user', '', { toolResults: [{ tool_use_id: 't', text: quote, isError: false }] }),
+        ],
+        turn,
+        quote,
+      ),
+    ).toBe(false)
+    // A long turn: words in the cut middle do not count, words in the kept
+    // head and tail do, and a person message with them does not help.
+    const middle: SessionMessage[] = [
+      row('user', `Repeat: ${quote}`),
+      row('assistant', `${'x'.repeat(30000)} ${quote} ${'y'.repeat(50000)}`),
+    ]
+    expect(holdsQuote(sessionExcerpt(middle, turn), quote)).toBe(true)
+    expect(excerptKeepsQuote(middle, turn, quote)).toBe(false)
+    const ends: SessionMessage[] = [
+      row('user', 'Plan.'),
+      row('assistant', `${quote} ${'x'.repeat(70000)}`),
+    ]
+    expect(excerptKeepsQuote(ends, turn, quote)).toBe(true)
+    const tail: SessionMessage[] = [
+      row('user', 'Plan.'),
+      row('assistant', `${'x'.repeat(70000)} ${quote}`),
+    ]
+    expect(excerptKeepsQuote(tail, turn, quote)).toBe(true)
+    // Words split by the cut do not count.
+    const split: SessionMessage[] = [
+      row('assistant', `${'x'.repeat(19990)} ${quote} ${'y'.repeat(50000)}`),
+    ]
+    expect(excerptKeepsQuote(split, { start: 0, end: 0 }, quote)).toBe(false)
   })
 
   test('a tool call keeps at most 1500 characters of its input', () => {

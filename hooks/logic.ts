@@ -1046,10 +1046,30 @@ function rowText(row: SessionMessage): string {
   return `${row.role === 'assistant' ? 'AGENT' : 'INPUT'}: ${text}`
 }
 
+// The excerpt keeps at most LATEST_MAX characters of a turn: the first
+// LATEST_FIRST and the last LATEST_LAST, around LATEST_CUT.
+const LATEST_MAX = 60000
+const LATEST_FIRST = 20000
+const LATEST_LAST = 40000
+const LATEST_CUT = '\n\n[... middle of the turn left out ...]\n\n'
+const PART_SEPARATOR = '\n\n'
+
+/** The rows of a turn as the excerpt shows them, with the role of each. */
+function latestParts(
+  rows: readonly SessionMessage[],
+  turn: Turn,
+): { role: SessionMessage['role']; text: string }[] {
+  return rows
+    .slice(turn.start, turn.end + 1)
+    .filter(row => !isCompactionSummary(row))
+    .map(row => ({ role: row.role, text: rowText(row) }))
+    .filter(part => part.text !== '')
+}
+
 /**
  * The excerpt of the session that an excerpt check reads for one turn: the
- * newest compaction summary before the turn's end, the person's messages up
- * to the turn's first row, and the rows of the turn.
+ * newest compaction summary before the turn's end, every person message up
+ * to the turn's first row in order, and the rows of the turn.
  */
 export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): string {
   let summary: string | undefined
@@ -1058,18 +1078,13 @@ export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): str
     const row = rows[k]
     if (row === undefined) continue
     if (isCompactionSummary(row)) summary = row.text.trim()
-    if (k <= turn.start && isPersonMessage(row, rows[k - 1])) {
-      const text = row.text.trim()
-      if (!person.includes(text)) person.push(text)
-    }
+    // A message the person repeats stays: it can restate an instruction.
+    if (k <= turn.start && isPersonMessage(row, rows[k - 1])) person.push(row.text.trim())
   }
 
-  const latest = rows
-    .slice(turn.start, turn.end + 1)
-    .filter(row => !isCompactionSummary(row))
-    .map(rowText)
-    .filter(text => text !== '')
-    .join('\n\n')
+  const latest = latestParts(rows, turn)
+    .map(part => part.text)
+    .join(PART_SEPARATOR)
 
   const sections: string[] = []
   if (summary !== undefined) {
@@ -1086,16 +1101,48 @@ export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): str
   )
   sections.push(
     "## The agent's latest turn\n\n" +
-      cutMiddle(
-        latest,
-        60000,
-        20000,
-        40000,
-        '\n\n[... middle of the turn left out ...]\n\n',
-      ),
+      cutMiddle(latest, LATEST_MAX, LATEST_FIRST, LATEST_LAST, LATEST_CUT),
   )
 
   return sections.join('\n\n')
+}
+
+/**
+ * True when an agent row of the turn holds the quote in the part that the
+ * excerpt keeps of the turn. Person messages and input rows do not count. A
+ * quote that the cut splits does not count either.
+ */
+export function excerptKeepsQuote(
+  rows: readonly SessionMessage[],
+  turn: Turn,
+  quote: string,
+): boolean {
+  const parts = latestParts(rows, turn).map(part => ({
+    role: part.role,
+    chars: Array.from(part.text),
+  }))
+  const separator = Array.from(PART_SEPARATOR).length
+  const total = parts.reduce(
+    (sum, part, k) => sum + part.chars.length + (k > 0 ? separator : 0),
+    0,
+  )
+  const isCut = total > LATEST_MAX
+  let start = 0
+  for (const part of parts) {
+    const at = start
+    start += part.chars.length + separator
+    if (part.role !== 'assistant') continue
+    // The characters of this row before the cut and after it.
+    const kept = isCut
+      ? [
+          part.chars.slice(0, Math.max(0, LATEST_FIRST - at)),
+          part.chars.slice(Math.max(0, total - LATEST_LAST - at)),
+        ]
+      : [part.chars]
+    if (kept.some(chars => holdsQuote(chars.join(''), quote))) return true
+  }
+
+  return false
 }
 
 const LEADING_REMINDER = /^\s*<system-reminder>[\s\S]*?<\/system-reminder>/
