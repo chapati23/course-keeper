@@ -536,17 +536,74 @@ function time(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')} UTC`
 }
 
+/** The default name of the vision file. */
+export const DEFAULT_VISION_FILE = 'VISION.md'
+/** The default name of the anti-patterns file. */
+export const DEFAULT_ANTI_PATTERNS_FILE = 'ANTI-PATTERNS.md'
+const MAX_FILE_NAME = 200
+
+/**
+ * The names of the two files, as configured: paths relative to the directory
+ * where the vision is looked for. The texts shown to the person use them.
+ */
+export type FileNames = { vision: string; antiPatterns: string }
+
+export const DEFAULT_FILE_NAMES: FileNames = {
+  vision: DEFAULT_VISION_FILE,
+  antiPatterns: DEFAULT_ANTI_PATTERNS_FILE,
+}
+
+/**
+ * A configured file name, or `fallback` when the value is not a safe relative
+ * path: not a string, empty, absolute (`/`, `~`, a drive letter), with a
+ * backslash, a `..` segment or a control character, or over 200 characters.
+ * Empty and `.` segments are dropped, so `./docs//VISION.md` is `docs/VISION.md`.
+ */
+export function fileName(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const name = value.trim()
+  if (name === '' || name.length > MAX_FILE_NAME) return fallback
+  if (/^[/~]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\\')) return fallback
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return fallback
+  const segments = name.split('/')
+  if (segments.includes('..')) return fallback
+  const kept = segments.filter(segment => segment !== '' && segment !== '.')
+
+  return kept.length === 0 ? fallback : kept.join('/')
+}
+
+/**
+ * The file names from the plugin's options, each one checked by `fileName`.
+ * `readsAntiPatterns` is false when both name the same file (compared without
+ * case, as on a case-insensitive file system): that file is then read once,
+ * as the vision.
+ */
+export function fileNames(options: {
+  visionFile?: unknown
+  antiPatternsFile?: unknown
+}): FileNames & { readsAntiPatterns: boolean } {
+  const vision = fileName(options.visionFile, DEFAULT_VISION_FILE)
+  const antiPatterns = fileName(options.antiPatternsFile, DEFAULT_ANTI_PATTERNS_FILE)
+
+  return {
+    vision,
+    antiPatterns,
+    readsAntiPatterns: vision.toLowerCase() !== antiPatterns.toLowerCase(),
+  }
+}
+
 /** The text `/course-keeper` prints. */
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
   antiPatternsPath?: string,
+  names: FileNames = DEFAULT_FILE_NAMES,
 ): string {
   const lines = [
     visionPath === undefined
-      ? 'VISION.md: not found. No checks run without it.'
-      : `VISION.md: ${visionPath}`,
-    ...(antiPatternsPath === undefined ? [] : [`ANTI-PATTERNS.md: ${antiPatternsPath}`]),
+      ? `${names.vision}: not found. No checks run without it.`
+      : `${names.vision}: ${visionPath}`,
+    ...(antiPatternsPath === undefined ? [] : [`${names.antiPatterns}: ${antiPatternsPath}`]),
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',
@@ -1463,10 +1520,15 @@ function placeText(target: number, isNew: boolean): string {
 }
 
 /** Where the draft's sentence goes, as a report names it. */
-function draftHeading(target: number, isNew: boolean, inAntiPatterns: boolean): string {
+function draftHeading(
+  target: number,
+  isNew: boolean,
+  inAntiPatterns: boolean,
+  names: FileNames,
+): string {
   return inAntiPatterns
-    ? `Draft sentence for ANTI-PATTERNS.md, under invariant ${target}`
-    : `Draft sentence for VISION.md, ${placeText(target, isNew)}`
+    ? `Draft sentence for ${names.antiPatterns}, under invariant ${target}`
+    : `Draft sentence for ${names.vision}, ${placeText(target, isNew)}`
 }
 
 /** The lines that close a report: what the draft allows, its source, the notes. */
@@ -1474,6 +1536,7 @@ function closingLines(
   draft: CourseKeeperDraft,
   version: string | undefined,
   inAntiPatterns: boolean,
+  names: FileNames,
 ): string[] {
   const lines = draft.allowed === '' ? [] : [`Must stay allowed: ${draft.allowed}`]
   const date = new Date(draft.draftedAt).toISOString().slice(0, 10)
@@ -1484,8 +1547,8 @@ function closingLines(
       `${version === undefined ? '' : `; course keeper ${version}`}.`,
     '',
     inAntiPatterns
-      ? 'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course keeper does not change the files.'
-      : 'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+      ? `This is a draft for the owners of ${names.antiPatterns} and ${names.vision}. Course keeper does not change the files.`
+      : `This is a draft for the owners of ${names.vision}. Course keeper does not change the file.`,
     '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
     '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
     '  too broad and 4 too narrow.',
@@ -1506,11 +1569,14 @@ export function learnReport(input: {
   version?: string
   /** True when the sentence goes into ANTI-PATTERNS.md. */
   inAntiPatterns?: boolean
+  /** The configured file names; the defaults when not given. */
+  names?: FileNames
 }): string {
   const { draft, target, isNew, control, verify, earlier, version } = input
   const inAntiPatterns = input.inAntiPatterns === true
+  const names = input.names ?? DEFAULT_FILE_NAMES
   const lines = [
-    `${draftHeading(target, isNew, inAntiPatterns)}:`,
+    `${draftHeading(target, isNew, inAntiPatterns, names)}:`,
     `  ${draft.sentence}`,
     '',
   ]
@@ -1528,7 +1594,7 @@ export function learnReport(input: {
   lines.push(
     `Test on the turn you corrected: ${verifyLine(verify, target)}`,
     earlierLine(earlier),
-    ...closingLines(draft, version, inAntiPatterns),
+    ...closingLines(draft, version, inAntiPatterns, names),
   )
 
   return lines.join('\n')
@@ -1545,16 +1611,19 @@ export function untestedReport(input: {
   version?: string
   /** True when the sentence goes into ANTI-PATTERNS.md. */
   inAntiPatterns?: boolean
+  /** The configured file names; the defaults when not given. */
+  names?: FileNames
 }): string {
   const { draft, target, isNew, version } = input
   const inAntiPatterns = input.inAntiPatterns === true
+  const names = input.names ?? DEFAULT_FILE_NAMES
 
   return [
     'The turn you corrected is too long for the test. The agent\'s words fall in the part ' +
       'that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.',
     '',
-    `${draftHeading(target, isNew, inAntiPatterns)} (not tested):`,
+    `${draftHeading(target, isNew, inAntiPatterns, names)} (not tested):`,
     `  ${draft.sentence}`,
-    ...closingLines(draft, version, inAntiPatterns),
+    ...closingLines(draft, version, inAntiPatterns, names),
   ].join('\n')
 }

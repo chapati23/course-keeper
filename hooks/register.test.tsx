@@ -1132,6 +1132,68 @@ test('with an anti-patterns file, a sentence for an invariant is tested in the a
   expect(completions.at(-1)).toContain(`2. ${SENTENCE}\n\n# Anti-patterns:`)
 })
 
+test(
+  'the configured files are the ones the check reads and the texts name',
+  { options: { visionFile: 'docs/course.md', antiPatternsFile: 'docs/avoid.md' } },
+  async ($, on) => {
+    const { forks, files } = world(on, prompt => (prompt.includes('Catch:') ? DRAFT : 'verdict: none'), 'none', {
+      messages: () => ROWS,
+    })
+    files['/work/repo/ANTI-PATTERNS.md'] = '# Not read\n'
+
+    // VISION.md at the default place is not the vision now.
+    expect(await status($)).toContain('docs/course.md: not found. No checks run without it.')
+    expect(await command($, 'check')).toBe('Check finished: did not run: no docs/course.md found.')
+    expect(await command($, 'learn')).toBe(
+      'No docs/course.md found. /course-keeper learn does not run without it.',
+    )
+    expect(forks).toHaveLength(0)
+
+    files['/work/repo/docs/course.md'] = '# Course\n\n1. One service sets every price.\n'
+    files['/work/repo/docs/avoid.md'] = ANTI_PATTERNS
+    const shown = await status($)
+    expect(shown).toContain(
+      'docs/course.md: /work/repo/docs/course.md\ndocs/avoid.md: /work/repo/docs/avoid.md\n',
+    )
+    expect(shown).not.toContain('VISION.md')
+    await command($, 'check')
+    expect(forks[0]).toContain('Vision:\n# Course\n\n1. One service sets every price.\n\n# Anti-patterns:')
+    expect(forks[0]).toContain(ANTI_PATTERNS)
+    expect(forks[0]).not.toContain('# Example')
+    expect(forks[0]).not.toContain('# Not read')
+
+    await command($, 'learn')
+    expect(await command($, 'learn yes')).toContain(
+      'This is a draft for the owners of docs/avoid.md and docs/course.md.',
+    )
+  },
+)
+
+test(
+  'an invalid file name falls back to the default',
+  { options: { visionFile: '../VISION.md', antiPatternsFile: '/etc/passwd' } },
+  async ($, on) => {
+    const { files } = world(on, () => 'verdict: none')
+    files['/work/repo/ANTI-PATTERNS.md'] = ANTI_PATTERNS
+
+    expect(await status($)).toContain(
+      'VISION.md: /work/repo/VISION.md\nANTI-PATTERNS.md: /work/repo/ANTI-PATTERNS.md\n',
+    )
+  },
+)
+
+test(
+  'two names of the same file read it once, as the vision',
+  { options: { antiPatternsFile: './VISION.md' } },
+  async ($, on) => {
+    const { forks } = world(on, () => 'verdict: none')
+
+    expect(await status($)).toContain('VISION.md: /work/repo/VISION.md\nChecks:')
+    await command($, 'check')
+    expect(forks[0]).not.toContain('# Anti-patterns:')
+  },
+)
+
 test('cancel drops the draft', async ($, on) => {
   world(on, learnFork(), 'none', { messages: () => ROWS })
 

@@ -6,7 +6,7 @@ Course keeper reports to the person. It does not deny, change or stop the agent'
 
 ## The vision
 
-Course keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Without the file, course keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
+Course keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Both file names can be changed ([Settings](#settings)). Without the file, course keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
 
 The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. An alert cites an invariant by its number. For example:
 
@@ -77,6 +77,17 @@ claude plugin install course-keeper --marketplace chapati23/course-keeper
 ```
 
 Answer `y` to add the marketplace, then choose a scope. Update with `claude plugin update course-keeper`, then run `/reload-plugins` or start a new session.
+
+## Settings
+
+Course keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
+
+| Setting | Default | The file it names |
+| --- | --- | --- |
+| `visionFile` | `VISION.md` | The file that holds the vision. |
+| `antiPatternsFile` | `ANTI-PATTERNS.md` | The optional file that holds the acts to avoid. |
+
+Each value is a path relative to the place where course keeper looks for the vision: the root of the repository (the main working tree), or the project root outside a repository. Change a name when the project already has a file of that name that is about something else. An empty value, an absolute path, or a path with `..` or a backslash counts as the default. When both settings name the same file, course keeper reads it as the vision only. The rest of this page uses the default names.
 
 ## What you see
 

@@ -6,6 +6,8 @@ import {
   ANTI_PATTERNS_HEADING,
   ANTI_PATTERNS_NOTE,
   CHECK_STALE_MS,
+  DEFAULT_ANTI_PATTERNS_FILE,
+  DEFAULT_VISION_FILE,
   LEARN_LIMITS,
   LIMITS,
   MAX_INSTRUCTIONS,
@@ -37,6 +39,8 @@ import {
   formatAlerts,
   formatInstructions,
   holdsQuote,
+  fileName,
+  fileNames,
   isCheckRunning,
   isPersonMessage,
   isPersonOrigin,
@@ -1146,6 +1150,74 @@ describe('the anti-patterns file', () => {
     )
     expect(statusText(emptyRecord(), '/r/VISION.md')).not.toContain('ANTI-PATTERNS.md')
   })
+
+  test('the status names the configured files', () => {
+    const names = { vision: 'docs/course.md', antiPatterns: 'docs/avoid.md' }
+    expect(statusText(emptyRecord(), '/r/docs/course.md', '/r/docs/avoid.md', names)).toMatch(
+      /^docs\/course\.md: \/r\/docs\/course\.md\ndocs\/avoid\.md: \/r\/docs\/avoid\.md\nChecks: on/,
+    )
+    expect(statusText(emptyRecord(), undefined, undefined, names)).toMatch(
+      /^docs\/course\.md: not found\. No checks run without it\.\n/,
+    )
+  })
+})
+
+describe('the configured file names', () => {
+  test('a relative path is kept, trimmed, without empty or "." segments', () => {
+    expect(fileName('VISION.md', 'x')).toBe('VISION.md')
+    expect(fileName('  docs/course.md \n', 'x')).toBe('docs/course.md')
+    expect(fileName('./docs//course.md', 'x')).toBe('docs/course.md')
+    expect(fileName('a'.repeat(200), 'x')).toBe('a'.repeat(200))
+  })
+
+  test('a value that is not a safe relative path falls back', () => {
+    for (const bad of [
+      undefined,
+      7,
+      true,
+      ['VISION.md'],
+      '',
+      '   ',
+      '.',
+      './',
+      '/etc/passwd',
+      '~/VISION.md',
+      'C:/VISION.md',
+      'c:VISION.md',
+      'docs\\VISION.md',
+      '../VISION.md',
+      'docs/../../VISION.md',
+      'docs/..',
+      'VISION\u0000.md',
+      'docs/\tVISION.md',
+      'VISION\u007f.md',
+      'a'.repeat(201),
+    ]) {
+      expect(fileName(bad, 'fallback.md')).toBe('fallback.md')
+    }
+  })
+
+  test('the options give the names, with defaults for missing or invalid values', () => {
+    expect(fileNames({})).toEqual({
+      vision: DEFAULT_VISION_FILE,
+      antiPatterns: DEFAULT_ANTI_PATTERNS_FILE,
+      readsAntiPatterns: true,
+    })
+    expect(fileNames({ visionFile: 'course.md', antiPatternsFile: '../avoid.md' })).toEqual({
+      vision: 'course.md',
+      antiPatterns: 'ANTI-PATTERNS.md',
+      readsAntiPatterns: true,
+    })
+  })
+
+  test('two names of the same file read it once, as the vision', () => {
+    expect(fileNames({ visionFile: 'docs/course.md', antiPatternsFile: './docs/course.md' })).toEqual({
+      vision: 'docs/course.md',
+      antiPatterns: 'docs/course.md',
+      readsAntiPatterns: false,
+    })
+    expect(fileNames({ antiPatternsFile: 'vision.md' }).readsAntiPatterns).toBe(false)
+  })
 })
 
 describe('the learn answers', () => {
@@ -1305,6 +1377,30 @@ describe('the learn answers', () => {
       'Draft sentence for ANTI-PATTERNS.md, under invariant 1 (not tested):\n  Never round',
     )
     expect(untested).toContain(owners)
+  })
+
+  test('the reports name the configured files', () => {
+    const names = { vision: 'docs/course.md', antiPatterns: 'docs/avoid.md' }
+    const report = learnReport({
+      draft: draftOf(),
+      target: 1,
+      isNew: false,
+      inAntiPatterns: true,
+      control: silent,
+      verify: alert('invariant 1'),
+      earlier: { tested: 0, newAlerts: [], noResults: [] },
+      names,
+    })
+    expect(report).toMatch(/^Draft sentence for docs\/avoid\.md, under invariant 1:\n/)
+    expect(report).toContain(
+      'This is a draft for the owners of docs/avoid.md and docs/course.md. Course keeper does not change the files.',
+    )
+    const untested = untestedReport({ draft: draftOf(), target: 4, isNew: true, names })
+    expect(untested).toContain('Draft sentence for docs/course.md, as a new invariant (not tested):')
+    expect(untested).toContain(
+      'This is a draft for the owners of docs/course.md. Course keeper does not change the file.',
+    )
+    expect(untested).not.toContain('VISION.md')
   })
 })
 

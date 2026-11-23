@@ -30,6 +30,7 @@ import {
   excerptKeepsQuote,
   failingRow,
   failingTurnAt,
+  fileNames,
   fillCheckPrompt,
   fillExtractPrompt,
   fillLearnPrompt,
@@ -76,6 +77,10 @@ const USAGE =
 // without the next-turn test below. A check reads them before its first wait.
 let startedTurn: string | undefined
 let endedTurn: { turnId: string; answer: string } | undefined
+
+// The configured file names (VISION.md and ANTI-PATTERNS.md by default).
+// `register` sets them; a change to the options reloads the module.
+let files = fileNames({})
 
 async function load(
   $: $,
@@ -216,7 +221,8 @@ type Vision = {
  * VISION.md at the repository's main working tree; at the project root only
  * when the session is in no repository. When `repo()` fails, whether there
  * is a repository is unknown, and there is no vision. ANTI-PATTERNS.md in the
- * same directory is read too; without VISION.md it is not used.
+ * same directory is read too; without VISION.md it is not used. Both names
+ * are the configured ones; when they name the same file, it is the vision.
  */
 async function readVision($: $): Promise<Vision | undefined> {
   let repo: SessionRepo | null
@@ -226,7 +232,7 @@ async function readVision($: $): Promise<Vision | undefined> {
     return undefined
   }
   const dir = (repo === null ? await $.session.root() : repo.root).replace(/\/+$/, '')
-  const path = `${dir}/VISION.md`
+  const path = `${dir}/${files.vision}`
   let text: string
   try {
     text = await $.fs.read(path)
@@ -234,7 +240,8 @@ async function readVision($: $): Promise<Vision | undefined> {
     // Missing or unreadable.
     return undefined
   }
-  const antiPatternsPath = `${dir}/ANTI-PATTERNS.md`
+  if (!files.readsAntiPatterns) return { path, text }
+  const antiPatternsPath = `${dir}/${files.antiPatterns}`
   try {
     return { path, text, antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsPath) } }
   } catch {
@@ -310,7 +317,7 @@ async function runCheck(
   started: number,
 ): Promise<string> {
   const vision = await readVision($)
-  if (vision === undefined) return record($, id, 'did not run: no VISION.md found')
+  if (vision === undefined) return record($, id, `did not run: no ${files.vision} found`)
 
   const template = await readPrompt($, 'check')
   const { record: held } = await load($, id)
@@ -442,7 +449,7 @@ async function runCommand($: $, args: string): Promise<string> {
       const vision = await readVision($)
       const { record: held } = await load($, id)
 
-      return statusText(held, vision?.path, vision?.antiPatterns?.path)
+      return statusText(held, vision?.path, vision?.antiPatterns?.path, files)
     }
     case 'check':
       return `Check finished: ${await check($, 'command')}.`
@@ -526,7 +533,7 @@ async function learn($: $, words: string): Promise<string> {
 
   const vision = await readVision($)
   if (vision === undefined) {
-    return 'No VISION.md found. /course-keeper learn does not run without it.'
+    return `No ${files.vision} found. /course-keeper learn does not run without it.`
   }
 
   // At most one learn step in flight per session, as for the check, with its
@@ -694,6 +701,7 @@ async function testDraft(
         target: added.target,
         isNew: added.isNew,
         inAntiPatterns: added.inAntiPatterns,
+        names: files,
         version,
       }),
     )
@@ -790,6 +798,7 @@ async function testDraft(
       earlier: tested,
       version,
       inAntiPatterns: added.inAntiPatterns,
+      names: files,
     }),
   )
 }
@@ -854,7 +863,8 @@ async function tell($: $, id: string, shownAt: number) {
   $.ui.toast('Course keeper could not send the note to the agent. The alert is shown again.')
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  files = fileNames(options)
   on('session.start', async ($, e, next) => {
     try {
       // A literal name, so that validate reads the command.run hook below as
