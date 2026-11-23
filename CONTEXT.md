@@ -7,12 +7,16 @@ A Claude Code plugin that checks a coding session against the project's vision a
 ### What a session is held to
 
 **Vision**:
-The project's short statement of what it is and what every change must keep true, kept as `VISION.md` at the repository root.
+The project's short statement of what it is and what every change must keep true, kept by default as `VISION.md` at the repository root.
 _Avoid_: mission, north star, principles
 
 **Invariant**:
 One numbered, testable statement in the vision that a session must not contradict.
 _Avoid_: rule, principle, guideline
+
+**Anti-patterns file**:
+An optional file, kept by default as `ANTI-PATTERNS.md` beside the vision, that holds the sentences that name acts to avoid, in one section for each invariant. An act named there breaks that invariant.
+_Avoid_: examples, appendix, rule book
 
 **Standing instruction**:
 A goal or an instruction that the person stated in a session and that stays in force beyond the task it was given with.

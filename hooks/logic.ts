@@ -536,15 +536,62 @@ function time(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')} UTC`
 }
 
+/** The default name of the vision file. */
+export const DEFAULT_VISION_FILE = 'VISION.md'
+/** The default name of the anti-patterns file. */
+export const DEFAULT_ANTI_PATTERNS_FILE = 'ANTI-PATTERNS.md'
+const MAX_FILE_NAME = 200
+
+/**
+ * The names of the two files, as configured: paths relative to the directory
+ * where the vision is looked for. The texts shown to the person use them.
+ */
+export type FileNames = { vision: string; antiPatterns: string }
+
+export const DEFAULT_FILE_NAMES: FileNames = {
+  vision: DEFAULT_VISION_FILE,
+  antiPatterns: DEFAULT_ANTI_PATTERNS_FILE,
+}
+
+/**
+ * A configured file name, or `fallback` when the value is not a safe relative
+ * path: not a string, empty, absolute (`/`, `~`, a drive letter), with a
+ * backslash, a `..` segment or a control character, or over 200 characters.
+ * Empty and `.` segments are dropped, so `./docs//VISION.md` is `docs/VISION.md`.
+ */
+export function fileName(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const name = value.trim()
+  if (name === '' || name.length > MAX_FILE_NAME) return fallback
+  if (/^[/~]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\\')) return fallback
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return fallback
+  const segments = name.split('/')
+  if (segments.includes('..')) return fallback
+  const kept = segments.filter(segment => segment !== '' && segment !== '.')
+
+  return kept.length === 0 ? fallback : kept.join('/')
+}
+
+/** The file names from the plugin's options, each one checked by `fileName`. */
+export function fileNames(options: { visionFile?: unknown; antiPatternsFile?: unknown }): FileNames {
+  return {
+    vision: fileName(options.visionFile, DEFAULT_VISION_FILE),
+    antiPatterns: fileName(options.antiPatternsFile, DEFAULT_ANTI_PATTERNS_FILE),
+  }
+}
+
 /** The text `/course-keeper` prints. */
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
+  antiPatternsPath?: string,
+  names: FileNames = DEFAULT_FILE_NAMES,
 ): string {
   const lines = [
     visionPath === undefined
-      ? 'VISION.md: not found. No checks run without it.'
-      : `VISION.md: ${visionPath}`,
+      ? `${names.vision}: not found. No checks run without it.`
+      : `${names.vision}: ${visionPath}`,
+    ...(antiPatternsPath === undefined ? [] : [`${names.antiPatterns}: ${antiPatternsPath}`]),
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',
@@ -1221,6 +1268,126 @@ export function addSentence(
   }
 }
 
+export const ANTI_PATTERNS_HEADING = '# Anti-patterns: acts that break the invariants above'
+export const ANTI_PATTERNS_NOTE =
+  'The number of each section below is the number of the invariant it belongs to, ' +
+  'and an act named in a section is a deviation from that invariant.'
+
+/**
+ * The text that fills the `{{vision}}` field of every prompt: the vision,
+ * then the anti-patterns file under its own heading. Without an anti-patterns file, or with an
+ * empty one, it is the vision unchanged.
+ */
+export function visionField(vision: string, antiPatterns: string | undefined): string {
+  if (antiPatterns === undefined || antiPatterns.trim() === '') return vision
+
+  return `${vision.replace(/\s+$/, '')}\n\n${ANTI_PATTERNS_HEADING}\n${ANTI_PATTERNS_NOTE}\n\n${antiPatterns}`
+}
+
+const ANY_HEADING = /^#{1,6}(\s|$)/
+
+/**
+ * The anti-patterns text with the sentence added as a bullet at the end of the
+ * section of invariant n: from its heading to the line before the next
+ * heading, or to the end. Trailing blank lines stay after the bullet. When
+ * the anti-patterns text has no such section, a new section `## n.` is appended.
+ */
+export function addAntiPattern(antiPatterns: string, n: number, sentence: string): string {
+  const bullet = `- ${sentence}`
+  const lines = antiPatterns.split('\n')
+  const own = new RegExp(`^#{1,6}\\s*${n}(?:[.)]|\\s|$)`)
+  // A heading inside a fenced code block is text, not a section.
+  const fenced = fencedLines(lines)
+  const at = lines.findIndex((line, i) => !fenced[i] && own.test(line))
+  if (at < 0) {
+    const kept = antiPatterns.replace(/\s+$/, '')
+
+    return `${kept === '' ? '' : `${kept}\n\n`}## ${n}.\n\n${bullet}\n`
+  }
+  const next = lines.findIndex((line, i) => i > at && !fenced[i] && ANY_HEADING.test(line))
+  let last = (next < 0 ? lines.length : next) - 1
+  while (last > at && (lines[last] ?? '').trim() === '') last -= 1
+  const added = last === at ? ['', bullet] : [bullet]
+
+  return [...lines.slice(0, last + 1), ...added, ...lines.slice(last + 1)].join('\n')
+}
+
+/**
+ * For each line, true when it lies in a fenced code block (``` or ~~~, up to
+ * three spaces in), the fence lines included. A block closes at a line of
+ * the same fence character, at least as long, and nothing else; one that
+ * never closes runs to the end.
+ */
+export function fencedLines(lines: readonly string[]): boolean[] {
+  let fence: string | undefined
+
+  return lines.map(line => {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1]
+    if (fence === undefined) {
+      if (marker === undefined) return false
+      fence = marker
+
+      return true
+    }
+    if (
+      marker !== undefined &&
+      marker[0] === fence[0] &&
+      marker.length >= fence.length &&
+      line.trim() === marker
+    ) {
+      fence = undefined
+    }
+
+    return true
+  })
+}
+
+/**
+ * True when `path` lies strictly under the directory `root`: both are real
+ * paths (every link followed). A trailing separator on the root does not
+ * count, the root itself is not under it, and `/r/app2` is not under `/r/app`.
+ */
+export function isUnderRoot(path: string, root: string): boolean {
+  // On a POSIX root a backslash is a character of a name, not a separator.
+  const posix = root.startsWith('/')
+  const base = root.replace(posix ? /\/+$/ : /[\\/]+$/, '')
+  if (!path.startsWith(base) || path.length <= base.length + 1) return false
+  const sep = path[base.length]
+
+  return sep === '/' || (!posix && sep === '\\')
+}
+
+/**
+ * The `{{vision}}` field with the draft's sentence added. With an anti-patterns file
+ * and the place `invariant <n>`, the sentence goes into the anti-patterns text under
+ * invariant n (`inAntiPatterns`). Otherwise it goes into the vision as
+ * `addSentence` places it.
+ */
+export function addDraftSentence(
+  vision: string,
+  antiPatterns: string | undefined,
+  place: string,
+  sentence: string,
+): { text: string; target: number; isNew: boolean; inAntiPatterns: boolean } {
+  const wanted = /^invariant (\d+)$/.exec(place)
+  const target = wanted ? Number(wanted[1]) : 0
+  // A number that the vision does not hold names no invariant: the sentence
+  // then goes the way of `addSentence`, as a new invariant.
+  const held = vision.split('\n').some(line => Number(ITEM.exec(line)?.[1]) === target)
+  if (antiPatterns !== undefined && wanted && held) {
+
+    return {
+      text: visionField(vision, addAntiPattern(antiPatterns, target, sentence)),
+      target,
+      isNew: false,
+      inAntiPatterns: true,
+    }
+  }
+  const added = addSentence(vision, place, sentence)
+
+  return { ...added, text: visionField(added.text, antiPatterns), inAntiPatterns: false }
+}
+
 /** What one excerpt check gave: a reply, or why there is none. */
 export type ExcerptResult =
   | { kind: 'reply'; reply: CheckReply }
@@ -1387,8 +1554,25 @@ function placeText(target: number, isNew: boolean): string {
   return isNew ? 'as a new invariant' : `invariant ${target}`
 }
 
+/** Where the draft's sentence goes, as a report names it. */
+function draftHeading(
+  target: number,
+  isNew: boolean,
+  inAntiPatterns: boolean,
+  names: FileNames,
+): string {
+  return inAntiPatterns
+    ? `Draft sentence for ${names.antiPatterns}, under invariant ${target}`
+    : `Draft sentence for ${names.vision}, ${placeText(target, isNew)}`
+}
+
 /** The lines that close a report: what the draft allows, its source, the notes. */
-function closingLines(draft: CourseKeeperDraft, version: string | undefined): string[] {
+function closingLines(
+  draft: CourseKeeperDraft,
+  version: string | undefined,
+  inAntiPatterns: boolean,
+  names: FileNames,
+): string[] {
   const lines = draft.allowed === '' ? [] : [`Must stay allowed: ${draft.allowed}`]
   const date = new Date(draft.draftedAt).toISOString().slice(0, 10)
   lines.push(
@@ -1397,7 +1581,9 @@ function closingLines(draft: CourseKeeperDraft, version: string | undefined): st
       `${draft.model || "the session's model"}` +
       `${version === undefined ? '' : `; course keeper ${version}`}.`,
     '',
-    'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+    inAntiPatterns
+      ? `This is a draft for the owners of ${names.antiPatterns} and ${names.vision}. Course keeper does not change the files.`
+      : `This is a draft for the owners of ${names.vision}. Course keeper does not change the file.`,
     '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
     '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
     '  too broad and 4 too narrow.',
@@ -1416,10 +1602,16 @@ export function learnReport(input: {
   verify: ExcerptResult
   earlier: EarlierTest
   version?: string
+  /** True when the sentence goes into ANTI-PATTERNS.md. */
+  inAntiPatterns?: boolean
+  /** The configured file names; the defaults when not given. */
+  names?: FileNames
 }): string {
   const { draft, target, isNew, control, verify, earlier, version } = input
+  const inAntiPatterns = input.inAntiPatterns === true
+  const names = input.names ?? DEFAULT_FILE_NAMES
   const lines = [
-    `Draft sentence for VISION.md, ${placeText(target, isNew)}:`,
+    `${draftHeading(target, isNew, inAntiPatterns, names)}:`,
     `  ${draft.sentence}`,
     '',
   ]
@@ -1437,7 +1629,7 @@ export function learnReport(input: {
   lines.push(
     `Test on the turn you corrected: ${verifyLine(verify, target)}`,
     earlierLine(earlier),
-    ...closingLines(draft, version),
+    ...closingLines(draft, version, inAntiPatterns, names),
   )
 
   return lines.join('\n')
@@ -1452,15 +1644,21 @@ export function untestedReport(input: {
   target: number
   isNew: boolean
   version?: string
+  /** True when the sentence goes into ANTI-PATTERNS.md. */
+  inAntiPatterns?: boolean
+  /** The configured file names; the defaults when not given. */
+  names?: FileNames
 }): string {
   const { draft, target, isNew, version } = input
+  const inAntiPatterns = input.inAntiPatterns === true
+  const names = input.names ?? DEFAULT_FILE_NAMES
 
   return [
     'The turn you corrected is too long for the test. The agent\'s words fall in the part ' +
       'that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.',
     '',
-    `Draft sentence for VISION.md, ${placeText(target, isNew)} (not tested):`,
+    `${draftHeading(target, isNew, inAntiPatterns, names)} (not tested):`,
     `  ${draft.sentence}`,
-    ...closingLines(draft, version),
+    ...closingLines(draft, version, inAntiPatterns, names),
   ].join('\n')
 }

@@ -6,7 +6,7 @@ Course keeper reports to the person. It does not deny, change or stop the agent'
 
 ## The vision
 
-Course keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Without the file, course keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
+Course keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Both file names can be changed ([Settings](#settings)). Without the file, course keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
 
 The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. An alert cites an invariant by its number. For example:
 
@@ -22,9 +22,23 @@ A command-line tool that turns timesheets into invoices.
 Tracked drift: the old exporter still rounds amounts itself (invariant 1).
 ```
 
+An optional `ANTI-PATTERNS.md` beside `VISION.md` holds the sentences that name acts to avoid, so the vision stays short. It has one section for each invariant, and the heading of a section starts with the number of its invariant. The check reads both files. Without `VISION.md`, course keeper does not read the anti-patterns file. For example:
+
+```markdown
+# Anti-patterns for the vision
+
+## 1. One module computes every amount
+
+- Never round, convert or add up money in other code, not even for display.
+
+## 2. The tool never sends an invoice
+
+- Never call the mail client from the tool.
+```
+
 ### Name the act to avoid
 
-Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident.
+Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident. The sentence can stand in the invariant or in the invariant's section of `ANTI-PATTERNS.md`. In the tests below, the sentence stood in the invariant; the tests did not measure the anti-patterns file.
 
 | Invariant | Text |
 | --- | --- |
@@ -64,6 +78,17 @@ claude plugin install course-keeper --marketplace chapati23/course-keeper
 
 Answer `y` to add the marketplace, then choose a scope. Update with `claude plugin update course-keeper`, then run `/reload-plugins` or start a new session.
 
+## Settings
+
+Course keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
+
+| Setting | Default | The file it names |
+| --- | --- | --- |
+| `visionFile` | `VISION.md` | The file that holds the vision. |
+| `antiPatternsFile` | `ANTI-PATTERNS.md` | The optional file that holds the acts to avoid. |
+
+Each value is a path relative to the place where course keeper looks for the vision: the root of the repository (the main working tree), or the project root outside a repository. Change a name when the project already has a file of that name that is about something else. An empty value, an absolute path, or a path with `..` or a backslash counts as the default. Course keeper does not read a file that leads outside the project through a symbolic link; such a file counts as not found. When both settings lead to the same file, course keeper reads it as the vision only. The rest of this page uses the default names.
+
 ## What you see
 
 When a check finds a deviation, a row above the prompt shows the invariant or the instruction, one sentence about the deviation, and four buttons:
@@ -79,20 +104,20 @@ Course keeper also notes standing instructions: goals or instructions you state 
 
 ## The command
 
-- `/course-keeper` shows whether a VISION.md was found, the standing instructions with their numbers, the alerts of this session with your answers, and the result of the last check.
+- `/course-keeper` shows whether a VISION.md and a ANTI-PATTERNS.md were found, the standing instructions with their numbers, the alerts of this session with your answers, and the result of the last check.
 - `/course-keeper forget <n>` removes standing instruction n. Later checks are told not to enforce it.
 - `/course-keeper check` runs a check now.
 - `/course-keeper off` and `/course-keeper on` switch the checks for this session. Standing instructions are still noted while checks are off.
-- `/course-keeper learn` drafts one sentence for VISION.md after you corrected the agent on something that no alert flagged. A copy of the session finds the agent's reply that you corrected and drafts a sentence that starts with "Never". Course keeper first shows the act and the agent's words, not the sentence. When the agent's words are not found word for word in its replies, it shows nothing of the draft. `/course-keeper learn <what the agent did wrong>` names the act in your words.
+- `/course-keeper learn` drafts one sentence for the vision after you corrected the agent on something that no alert flagged. When the project has a ANTI-PATTERNS.md, a sentence for an existing invariant is for that invariant's section of ANTI-PATTERNS.md; a sentence for a new invariant is always for VISION.md. A copy of the session finds the agent's reply that you corrected and drafts a sentence that starts with "Never". Course keeper first shows the act and the agent's words, not the sentence. When the agent's words are not found word for word in its replies, it shows nothing of the draft. `/course-keeper learn <what the agent did wrong>` names the act in your words.
 - `/course-keeper learn yes` accepts the act. Course keeper tests the sentence on excerpts of this session and shows it with the results: whether the check alerts on the turn you corrected with the sentence added, and whether it raises new alerts on up to 3 earlier turns. When the check already alerts on that turn with today's vision, on the invariant that the sentence would join, no sentence is offered. An alert of today's vision on another matter of that turn does not stop the test; the results name it. `/course-keeper learn cancel` drops the draft. A learn step in flight then keeps nothing.
-- Course keeper never writes VISION.md and sends nothing to the agent. The draft is for the owners of the vision.
+- Course keeper never writes VISION.md or ANTI-PATTERNS.md and sends nothing to the agent. The draft is for the owners of the vision.
 
 ## What is sent to the model, and when
 
-- **A check**, at the end of each main-agent turn that ends with an answer. Course keeper asks one question over a copy of the session: the session's own model gets the conversation as the main thread last sent it, plus the agent's final answer of the turn (the copy does not hold it yet) and the check prompt (`prompts/check.md`) with the text of VISION.md, the standing instructions and this session's alerts. The copy has no tools and gives one reply. At most one check runs at a time in a session.
+- **A check**, at the end of each main-agent turn that ends with an answer. Course keeper asks one question over a copy of the session: the session's own model gets the conversation as the main thread last sent it, plus the agent's final answer of the turn (the copy does not hold it yet) and the check prompt (`prompts/check.md`) with the text of VISION.md and of ANTI-PATTERNS.md (if there is one), the standing instructions and this session's alerts. The copy has no tools and gives one reply. At most one check runs at a time in a session.
 - **A standing-instruction check**, at each prompt you type that is not a slash command and has at least 12 characters. The `haiku` model gets `prompts/extract.md` and your whole prompt as it entered the session (after any other plugin changed or dropped it), and nothing else. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
 - **Tell the agent** sends the note to the agent only when you press the button.
-- **A learn step**, only when you run `/course-keeper learn`. The session's own model gets a copy of the session (a fork, as for a check, with the agent's final answer of the last turn) with the learn prompt (`prompts/learn.md`), the text of VISION.md and your words, if you gave any. After `/course-keeper learn yes`, separate calls send excerpts of the session to the session's model: the summary that replaced the earlier conversation, if there is one, all your messages up to that turn in order, and the rows of one turn. Each call also holds the check prompt (`prompts/check.md`, with `prompts/excerpt-head.md` in place of its head), and the text of VISION.md with or without the draft sentence. It holds no list of standing instructions: the list held now can hold one that your correction created. Your messages in the excerpt show what was in force at that turn. It holds the instructions you withdrew with `/course-keeper forget`, and the check is told not to enforce them.
+- **A learn step**, only when you run `/course-keeper learn`. The session's own model gets a copy of the session (a fork, as for a check, with the agent's final answer of the last turn) with the learn prompt (`prompts/learn.md`), the text of VISION.md and of ANTI-PATTERNS.md (if there is one) and your words, if you gave any. After `/course-keeper learn yes`, separate calls send excerpts of the session to the session's model: the summary that replaced the earlier conversation, if there is one, all your messages up to that turn in order, and the rows of one turn. Each call also holds the check prompt (`prompts/check.md`, with `prompts/excerpt-head.md` in place of its head), and the text of VISION.md and of ANTI-PATTERNS.md (if there is one), with or without the draft sentence. It holds no list of standing instructions: the list held now can hold one that your correction created. Your messages in the excerpt show what was in force at that turn. It holds the instructions you withdrew with `/course-keeper forget`, and the check is told not to enforce them.
 
 Course keeper keeps the standing instructions and alerts of the last 20 sessions in its store, a file under your Claude Code configuration directory. It sends them nowhere else.
 

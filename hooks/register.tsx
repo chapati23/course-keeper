@@ -12,8 +12,8 @@ import type { EngineInterface, Register, SessionRepo } from 'claude-code'
 import type { CourseKeeperAlert, CourseKeeperSession } from '../types'
 import {
   GIVE_WORDS,
+  addDraftSentence,
   addInstructions,
-  addSentence,
   addWithdrawn,
   addedNotice,
   alertsOn,
@@ -30,6 +30,7 @@ import {
   excerptKeepsQuote,
   failingRow,
   failingTurnAt,
+  fileNames,
   fillCheckPrompt,
   fillExtractPrompt,
   fillLearnPrompt,
@@ -37,6 +38,7 @@ import {
   formatAlerts,
   formatInstructions,
   isCheckRunning,
+  isUnderRoot,
   isPersonOrigin,
   learnReport,
   noteText,
@@ -54,6 +56,7 @@ import {
   stripLeadingComments,
   turnOf,
   untestedReport,
+  visionField,
   withFinalAnswer,
   withOutcome,
   withoutDraft,
@@ -75,6 +78,10 @@ const USAGE =
 // without the next-turn test below. A check reads them before its first wait.
 let startedTurn: string | undefined
 let endedTurn: { turnId: string; answer: string } | undefined
+
+// The configured file names (VISION.md and ANTI-PATTERNS.md by default).
+// `register` sets them; a change to the options reloads the module.
+let files = fileNames({})
 
 async function load(
   $: $,
@@ -204,26 +211,78 @@ async function readPrompt(
   return stripLeadingComments(await $.fs.read(`${$.plugin.root}/prompts/${name}.md`))
 }
 
+type Vision = {
+  path: string
+  text: string
+  /** ANTI-PATTERNS.md beside VISION.md, when it exists and can be read. */
+  antiPatterns?: { path: string; text: string }
+}
+
 /**
  * VISION.md at the repository's main working tree; at the project root only
  * when the session is in no repository. When `repo()` fails, whether there
- * is a repository is unknown, and there is no vision.
+ * is a repository is unknown, and there is no vision. ANTI-PATTERNS.md in the
+ * same directory is read too; without VISION.md it is not used. Both names
+ * are the configured ones. A file whose real path (every link followed) is
+ * not under the root's real path counts as not found, so its text never goes
+ * to a model. When both names lead to the same file, it is the vision.
  */
-async function readVision($: $): Promise<{ path: string; text: string } | undefined> {
+async function readVision($: $): Promise<Vision | undefined> {
   let repo: SessionRepo | null
   try {
     repo = await $.session.repo()
   } catch {
     return undefined
   }
-  const dir = repo === null ? await $.session.root() : repo.root
-  const path = `${dir.replace(/\/+$/, '')}/VISION.md`
+  const dir = (repo === null ? await $.session.root() : repo.root).replace(/\/+$/, '')
+  const root = await realPath($, dir === '' ? '/' : dir)
+  if (root === undefined) return undefined
+  const path = `${dir}/${files.vision}`
+  const real = await realFileUnder($, path, root)
+  if (real === undefined) return undefined
+  let text: string
   try {
-    return { path, text: await $.fs.read(path) }
+    text = await $.fs.read(real)
   } catch {
     // Missing or unreadable.
     return undefined
   }
+  const antiPatternsPath = `${dir}/${files.antiPatterns}`
+  const antiPatternsReal = await realFileUnder($, antiPatternsPath, root)
+  if (antiPatternsReal === undefined || antiPatternsReal === real) return { path, text }
+  try {
+    return { path, text, antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsReal) } }
+  } catch {
+    // No anti-patterns file, or an unreadable one: the vision alone.
+    return { path, text }
+  }
+}
+
+/** Where `path` lands, every link followed; undefined when it cannot be told. */
+async function realPath($: $, path: string): Promise<string | undefined> {
+  try {
+    return (await $.fs.stat(path, { resolve: true })).realPath
+  } catch {
+    return undefined
+  }
+}
+
+/** The real path of the file at `path` when it is a file under `root`. */
+async function realFileUnder($: $, path: string, root: string): Promise<string | undefined> {
+  let stat
+  try {
+    stat = await $.fs.stat(path, { resolve: true })
+  } catch {
+    return undefined
+  }
+  const real = stat.realPath
+
+  return stat.kind === 'file' && real !== undefined && isUnderRoot(real, root) ? real : undefined
+}
+
+/** The text that fills the `{{vision}}` field of a prompt. */
+function fieldOf(vision: Vision): string {
+  return visionField(vision.text, vision.antiPatterns?.text)
 }
 
 async function record($: $, id: string, outcome: string): Promise<string> {
@@ -288,12 +347,12 @@ async function runCheck(
   started: number,
 ): Promise<string> {
   const vision = await readVision($)
-  if (vision === undefined) return record($, id, 'did not run: no VISION.md found')
+  if (vision === undefined) return record($, id, `did not run: no ${files.vision} found`)
 
   const template = await readPrompt($, 'check')
   const { record: held } = await load($, id)
   const prompt = fillCheckPrompt(template, {
-    vision: vision.text,
+    vision: fieldOf(vision),
     instructions: formatInstructions(held.instructions, held.withdrawn),
     alerts: formatAlerts(held),
   })
@@ -420,7 +479,7 @@ async function runCommand($: $, args: string): Promise<string> {
       const vision = await readVision($)
       const { record: held } = await load($, id)
 
-      return statusText(held, vision?.path)
+      return statusText(held, vision?.path, vision?.antiPatterns?.path, files)
     }
     case 'check':
       return `Check finished: ${await check($, 'command')}.`
@@ -504,7 +563,7 @@ async function learn($: $, words: string): Promise<string> {
 
   const vision = await readVision($)
   if (vision === undefined) {
-    return 'No VISION.md found. /course-keeper learn does not run without it.'
+    return `No ${files.vision} found. /course-keeper learn does not run without it.`
   }
 
   // At most one learn step in flight per session, as for the check, with its
@@ -520,8 +579,8 @@ async function learn($: $, words: string): Promise<string> {
 
   try {
     return verb === 'yes'
-      ? await testDraft($, id, vision.text, started)
-      : await makeDraft($, id, vision.text, words, turn, started)
+      ? await testDraft($, id, vision, started)
+      : await makeDraft($, id, fieldOf(vision), words, turn, started)
   } catch {
     return 'Course keeper could not finish the learn step: a prompt file or a call failed.'
   } finally {
@@ -627,9 +686,11 @@ async function makeDraft(
 async function testDraft(
   $: $,
   id: string,
-  vision: string,
+  read: Vision,
   started: number,
 ): Promise<string> {
+  // Today's vision as the prompts get it, with the anti-patterns file when there is one.
+  const vision = fieldOf(read)
   const { record: held } = await load($, id)
   const draft = held.learn
   if (draft === undefined) return NO_DRAFT
@@ -657,14 +718,23 @@ async function testDraft(
         'The draft is dropped; nothing is kept.',
     )
   }
-  const added = addSentence(vision, draft.place, draft.sentence)
+  const added = addDraftSentence(read.text, read.antiPatterns?.text, draft.place, draft.sentence)
   // The excerpt leaves out the middle of a long turn. When the agent's words
   // fall there, no check can see them, and no model is called. Only the
   // agent's rows count: the person can repeat the words in a message.
   if (!excerptKeepsQuote(rows, failing, draft.quote)) {
     const version = await pluginVersion($)
 
-    return drop(untestedReport({ draft, target: added.target, isNew: added.isNew, version }))
+    return drop(
+      untestedReport({
+        draft,
+        target: added.target,
+        isNew: added.isNew,
+        inAntiPatterns: added.inAntiPatterns,
+        names: files,
+        version,
+      }),
+    )
   }
 
   let model: string
@@ -757,6 +827,8 @@ async function testDraft(
       verify: verify ?? { kind: 'no result', reason: 'the call failed' },
       earlier: tested,
       version,
+      inAntiPatterns: added.inAntiPatterns,
+      names: files,
     }),
   )
 }
@@ -821,7 +893,8 @@ async function tell($: $, id: string, shownAt: number) {
   $.ui.toast('Course keeper could not send the note to the agent. The alert is shown again.')
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  files = fileNames(options)
   on('session.start', async ($, e, next) => {
     try {
       // A literal name, so that validate reads the command.run hook below as

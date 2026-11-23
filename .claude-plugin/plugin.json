@@ -3,5 +3,19 @@
   "version": "0.1.0",
   "description": "Checks a coding session against the project's vision and the person's standing instructions, and alerts the person when it deviates.",
   "engines": { "claude-code": ">=2.1.323" },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "visionFile": {
+      "type": "string",
+      "title": "Vision file",
+      "description": "The file that holds the vision, as a path relative to the root of the repository (the main working tree), or to the project root outside a repository. An invalid path counts as VISION.md.",
+      "default": "VISION.md"
+    },
+    "antiPatternsFile": {
+      "type": "string",
+      "title": "Anti-patterns file",
+      "description": "The optional file that holds the acts to avoid, as a path relative to the same root as the vision file. An invalid path counts as ANTI-PATTERNS.md.",
+      "default": "ANTI-PATTERNS.md"
+    }
+  }
 }
