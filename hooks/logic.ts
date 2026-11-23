@@ -26,6 +26,7 @@ export const CHECK_STALE_MS = 5 * 60 * 1000
 export const LIMITS = {
   reference: 200,
   alert: 300,
+  instead: 160,
   evidence: 400,
   note: 1200,
 } as const
@@ -202,11 +203,13 @@ export type CheckReply =
       verdict: 'deviation'
       reference: string
       alert: string
+      /** What to do instead; absent when the reply has no such field or it is empty. */
+      instead?: string
       evidence: string
       note: string
     }
 
-const FIELD = /^(verdict|reference|alert|evidence|note)\s*:\s*(.*)$/i
+const FIELD = /^(verdict|reference|alert|instead|evidence|note)\s*:\s*(.*)$/i
 /**
  * The start of a reference field, after any run of backticks, asterisks or
  * underscores: `invariant <number>`, or `instruction "<text>"` with an
@@ -280,12 +283,22 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
     LIMITS.evidence,
   )
   const note = clean(fields.get('note') ?? '', LIMITS.note)
+  // Optional: a reply to an older prompt has no `instead`, and the model
+  // can leave it out.
+  const instead = clean(fields.get('instead') ?? '', LIMITS.instead)
 
   if (canonical === undefined) return undefined
   if (alert === '' || evidence === '' || note === '') return undefined
   const reference = clean(canonical, LIMITS.reference)
 
-  return { verdict: 'deviation', reference, alert, evidence, note }
+  return {
+    verdict: 'deviation',
+    reference,
+    alert,
+    ...(instead === '' ? {} : { instead }),
+    evidence,
+    note,
+  }
 }
 
 function unquote(text: string): string {
@@ -392,6 +405,7 @@ export function applyReply(
     reference: reply.reference,
     ...(title === undefined ? {} : { title }),
     alert: reply.alert,
+    ...(reply.instead === undefined ? {} : { instead: reply.instead }),
     evidence: reply.evidence,
     note: reply.note,
     shownAt: now,
@@ -679,7 +693,9 @@ export function statusText(
       ? ['  none']
       : all.map(
           (a, i) =>
-            `  ${i + 1}. ${a.reference}: ${a.alert} Answer: ${describeAnswer(a.answer)}.`,
+            `  ${i + 1}. ${a.reference}: ${a.alert}` +
+            (a.instead === undefined ? '' : ` Instead: ${a.instead.replace(/\.$/, '')}.`) +
+            ` Answer: ${describeAnswer(a.answer)}.`,
         )),
   )
   if (record.current) {
@@ -729,7 +745,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function readAlert(value: unknown): CourseKeeperAlert | undefined {
   if (!isObject(value)) return undefined
-  const { reference, title, alert, evidence, note, shownAt, answer } = value
+  const { reference, title, alert, instead, evidence, note, shownAt, answer } = value
   if (
     typeof reference !== 'string' ||
     typeof alert !== 'string' ||
@@ -741,13 +757,15 @@ function readAlert(value: unknown): CourseKeeperAlert | undefined {
     return undefined
   }
 
-  // Absent in a record written before alerts kept a title.
+  // Absent in a record written before alerts kept a title or an instead.
   const kept = typeof title === 'string' ? clean(title, MAX_HEADLINE_PART) : ''
+  const keptInstead = typeof instead === 'string' ? clean(instead, LIMITS.instead) : ''
 
   return {
     reference: clean(reference, LIMITS.reference),
     ...(kept === '' ? {} : { title: kept }),
     alert: clean(alert, LIMITS.alert),
+    ...(keptInstead === '' ? {} : { instead: keptInstead }),
     evidence: clean(evidence, LIMITS.evidence),
     note: clean(note, LIMITS.note),
     shownAt,

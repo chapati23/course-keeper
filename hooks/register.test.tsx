@@ -342,6 +342,29 @@ test('Dismiss is on key 4 and False alarm on key 3, which later checks read as a
   )
 })
 
+test('an instead field draws as its own bullet between the alert and the evidence', async ($, on) => {
+  const { clock } = world(on, () =>
+    DEVIATION.replace('evidence:', 'instead: Move the table into the price service.\nevidence:'),
+  )
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await rowLines(ui)).toEqual([
+      ...ROW.slice(0, 2),
+      '- Instead: Move the table into the price service.',
+      ...ROW.slice(2),
+    ])
+    // Not dim: it weighs as much as the alert.
+    expect((await ui.find({ type: 'Text', text: /^- Instead/ }))?.props.dimColor).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
 test('an instruction reference quotes the words in the headline', async ($, on) => {
   const { clock } = world(on, () =>
     DEVIATION.replace('reference: invariant 1', 'reference: instruction "never add a table to the client"'),

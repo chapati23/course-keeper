@@ -96,11 +96,12 @@ When a check finds a deviation, a row above the prompt shows it. For example, in
 ```
 ▲ Course keeper: this session breaks invariant 1 (One module computes every amount)
 - The session rounds the total in the exporter, which contradicts invariant 1.
+- Instead: call the one module for the total.
 - Evidence: "I will round the total in the exporter before it writes the file."
 1: Details · 2: Tell the agent · 3: False alarm · 4: Dismiss
 ```
 
-The first line names the invariant and its title, or quotes the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it. The next lines give one sentence about the deviation and the evidence, a quote from the agent. The row has four buttons:
+The first line names the invariant and its title, or quotes the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it. The next lines give one sentence about the deviation, what the invariant or the instruction asks for instead, and the evidence, a quote from the agent. The "Instead" line is left out when the check gave no such text. The row has four buttons:
 
 - `1 Details` shows or hides one more line: the note, the text that "Tell the agent" sends.
 - `2 Tell the agent` sends the note to the agent as a message from the plugin.
