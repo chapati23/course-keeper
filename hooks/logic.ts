@@ -1348,11 +1348,13 @@ export function fencedLines(lines: readonly string[]): boolean[] {
  * count, the root itself is not under it, and `/r/app2` is not under `/r/app`.
  */
 export function isUnderRoot(path: string, root: string): boolean {
-  const base = root.replace(/[\\/]+$/, '')
+  // On a POSIX root a backslash is a character of a name, not a separator.
+  const posix = root.startsWith('/')
+  const base = root.replace(posix ? /\/+$/ : /[\\/]+$/, '')
   if (!path.startsWith(base) || path.length <= base.length + 1) return false
   const sep = path[base.length]
 
-  return sep === '/' || sep === '\\'
+  return sep === '/' || (!posix && sep === '\\')
 }
 
 /**

@@ -1252,6 +1252,8 @@ describe('a real path under the project root', () => {
     expect(isUnderRoot('/r/app/', '/r/app')).toBe(false)
     expect(isUnderRoot('/r/app', '/r/app/')).toBe(false)
     expect(isUnderRoot('/r/app2/VISION.md', '/r/app')).toBe(false)
+    // On POSIX, `app\\outside` is a sibling directory, not a path under `app`.
+    expect(isUnderRoot('/r/app\\outside/VISION.md', '/r/app')).toBe(false)
     expect(isUnderRoot('/r/VISION.md', '/r/app')).toBe(false)
     expect(isUnderRoot('/elsewhere/VISION.md', '/r/app')).toBe(false)
   })
