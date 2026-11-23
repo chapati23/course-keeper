@@ -40,6 +40,14 @@ _Avoid_: warning, notification, heads-up
 The text of an alert passed on to the agent at the person's request.
 _Avoid_: correction, nudge, feedback
 
+**Catch**:
+A deviation that the person corrected in a session and that no alert flagged first.
+_Avoid_: miss, false negative, incident
+
+**Draft sentence**:
+One sentence that starts with "Never" and names the act of a catch, offered to the owners of the vision. Course keeper does not add it to the vision.
+_Avoid_: rule, fix, patch
+
 ### Who is involved
 
 **Person**:

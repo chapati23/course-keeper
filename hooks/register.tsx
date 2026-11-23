@@ -11,32 +11,54 @@ import type { EngineInterface, Register, SessionRepo } from 'claude-code'
 
 import type { CourseKeeperAlert, CourseKeeperSession } from '../types'
 import {
+  GIVE_WORDS,
   addInstructions,
+  addSentence,
   addWithdrawn,
   addedNotice,
+  alertsOn,
   answerCurrent,
   applyReply,
+  catchText,
+  clean,
   compactInstructions,
+  coveredText,
+  draftOf,
+  draftText,
+  earlierTurns,
+  excerptCheckPrompt,
+  excerptKeepsQuote,
+  failingRow,
+  failingTurnAt,
   fillCheckPrompt,
   fillExtractPrompt,
+  fillLearnPrompt,
   forgetInstruction,
   formatAlerts,
   formatInstructions,
   isCheckRunning,
   isPersonOrigin,
+  learnReport,
   noteText,
   normalizeRecord,
   oldestKeys,
   parseCheckReply,
   parseExtractReply,
+  parseLearnReply,
+  personCountAt,
   removeWithdrawn,
   restoreUnsent,
+  sessionExcerpt,
   shouldExtract,
   statusText,
-  stripLeadingComment,
+  stripLeadingComments,
+  turnOf,
+  untestedReport,
   withFinalAnswer,
   withOutcome,
+  withoutDraft,
 } from './logic'
+import type { EarlierTest, ExcerptResult, Turn } from './logic'
 
 type $ = EngineInterface
 
@@ -45,7 +67,8 @@ const STORE_PREFIX = 'session:'
 const MAX_STORED_SESSIONS = 20
 const USAGE =
   'Usage: /course-keeper, /course-keeper check, /course-keeper forget <n>, ' +
-  '/course-keeper off, /course-keeper on'
+  '/course-keeper off, /course-keeper on, ' +
+  '/course-keeper learn [yes | cancel | <what the agent did wrong>]'
 
 // The main loop's latest turns as the hooks heard them. Module variables: a
 // hot reload clears them, and a check then runs without the final answer and
@@ -73,8 +96,11 @@ async function load(
       ? stored.record
       : undefined
 
-  // A check that was in flight before the restart is not running now.
-  return { record: { ...normalizeRecord(record), checkingSince: null }, version: 0 }
+  // A check or a learn step that was in flight before the restart is not
+  // running now.
+  const { learningSince: _, ...rest } = normalizeRecord(record)
+
+  return { record: { ...rest, checkingSince: null }, version: 0 }
 }
 
 /** The time each of these stored sessions was saved. */
@@ -171,8 +197,11 @@ async function change(
   throw new Error('course keeper: the session record kept changing')
 }
 
-async function readPrompt($: $, name: 'check' | 'extract'): Promise<string> {
-  return stripLeadingComment(await $.fs.read(`${$.plugin.root}/prompts/${name}.md`))
+async function readPrompt(
+  $: $,
+  name: 'check' | 'extract' | 'learn' | 'excerpt-head',
+): Promise<string> {
+  return stripLeadingComments(await $.fs.read(`${$.plugin.root}/prompts/${name}.md`))
 }
 
 /**
@@ -406,6 +435,10 @@ async function runCommand($: $, args: string): Promise<string> {
       await saving
 
       return 'Course keeper checks are on for this session.'
+    case 'learn':
+      return learn($, args.trim().slice(verb.length).trim()).catch(
+        () => 'Course keeper could not finish the learn step.',
+      )
     case 'forget': {
       let removed: string | undefined
       await change($, id, r => {
@@ -429,6 +462,321 @@ async function runCommand($: $, args: string): Promise<string> {
     }
     default:
       return USAGE
+  }
+}
+
+const NO_DRAFT =
+  'No draft sentence waits for an answer. Run /course-keeper learn first.'
+const REPLACED = 'A newer learn request replaced this one.'
+
+/**
+ * `/course-keeper learn`: drafts one sentence for VISION.md from the agent's
+ * failing reply (`<words>` or none), tests a draft (`yes`) or drops it
+ * (`cancel`). It never writes VISION.md and sends nothing to the agent. It
+ * does not touch the check's in-flight mark, alerts or outcome.
+ */
+async function learn($: $, words: string): Promise<string> {
+  // Read before the first wait, as a check reads it.
+  const turn = endedTurn
+  const id = await $.session.id()
+  const verb = words.toLowerCase()
+
+  if (verb === 'cancel') {
+    // Cancel also clears the in-flight mark. A learn step in flight then
+    // keeps nothing and makes no further calls.
+    const now = await $.clock.now()
+    let had = false
+    let wasRunning = false
+    await change($, id, r => {
+      had = r.learn !== undefined
+      wasRunning = isCheckRunning(r.learningSince ?? null, now)
+      const rest = withoutDraft(r)
+
+      return (r.learningSince ?? null) === null ? rest : { ...rest, learningSince: null }
+    })
+    await saving
+
+    if (had) return 'The draft sentence is dropped.'
+
+    return wasRunning ? 'The learn step in flight is cancelled.' : NO_DRAFT
+  }
+  if (verb === 'yes' && (await load($, id)).record.learn === undefined) return NO_DRAFT
+
+  const vision = await readVision($)
+  if (vision === undefined) {
+    return 'No VISION.md found. /course-keeper learn does not run without it.'
+  }
+
+  // At most one learn step in flight per session, as for the check, with its
+  // own mark; a mark older than CHECK_STALE_MS counts as lost.
+  const started = await $.clock.now()
+  let isBusy = false
+  await change($, id, r => {
+    isBusy = isCheckRunning(r.learningSince ?? null, started)
+
+    return isBusy ? r : { ...r, learningSince: started }
+  })
+  if (isBusy) return 'A learn step is already running in this session. Wait for its answer.'
+
+  try {
+    return verb === 'yes'
+      ? await testDraft($, id, vision.text, started)
+      : await makeDraft($, id, vision.text, words, turn, started)
+  } catch {
+    return 'Course keeper could not finish the learn step: a prompt file or a call failed.'
+  } finally {
+    await change($, id, r =>
+      r.learningSince === started ? { ...r, learningSince: null } : r,
+    ).catch(() => undefined)
+  }
+}
+
+/**
+ * True while the learn step that started at `started` holds the in-flight
+ * mark. A plain read can show the record as this dispatch last saw it, so
+ * the record is written back when it looks owned: a write that another
+ * write beat reads the record again.
+ */
+async function ownsMark($: $, id: string, started: number): Promise<boolean> {
+  let isOwn = false
+  await change($, id, r => {
+    isOwn = r.learningSince === started
+
+    return isOwn ? { ...r } : r
+  })
+
+  return isOwn
+}
+
+/** Step one: a fork drafts the sentence; its quote must be the agent's. */
+async function makeDraft(
+  $: $,
+  id: string,
+  vision: string,
+  words: string,
+  turn: { turnId: string; answer: string } | undefined,
+  started: number,
+): Promise<string> {
+  // A new request replaces a draft the person did not accept.
+  await change($, id, withoutDraft)
+  const template = await readPrompt($, 'learn')
+  // As for a check: the fork's last request does not hold the agent's final
+  // answer to it, so the answer goes before the prompt. When the next turn
+  // started since, the fork's last request is that turn's, and no answer is
+  // added. Nothing waits between this test and the fork.
+  const isOvertaken =
+    turn !== undefined && startedTurn !== undefined && startedTurn !== turn.turnId
+  const reply = await $.model.fork({
+    prompt: withFinalAnswer(
+      fillLearnPrompt(template, { vision, catch: catchText(words) }),
+      isOvertaken ? '' : turn?.answer ?? '',
+    ),
+  })
+  if (!reply.isAnswered) {
+    return reply.reason === 'nothing-to-fork'
+      ? 'No sentence drafted: there is nothing in the session to fork yet.'
+      : `No sentence drafted: the fork ended with ${reply.reason}.`
+  }
+
+  const parsed = parseLearnReply(reply.text)
+  if (parsed === undefined) {
+    return `No sentence drafted: the draft reply was malformed.\n${GIVE_WORDS}`
+  }
+  if (parsed.result === 'none') {
+    return `No sentence drafted: ${parsed.reason || 'the draft gave no reason.'}\n${GIVE_WORDS}`
+  }
+  // The quote must stand word for word in one of the agent's replies, or
+  // nothing of the draft is shown.
+  const rows = await $.session.messages()
+  const at = failingRow(rows, parsed.quote)
+  if (at < 0) {
+    return (
+      "The draft quoted words that are not in the agent's replies, so it is not shown. " +
+      `Run /course-keeper learn again, or give the act in words.\n${GIVE_WORDS}`
+    )
+  }
+  // The draft keeps the failing turn by its person message, so a later
+  // reply that repeats the quote does not move it.
+  const personCount = personCountAt(rows, turnOf(rows, at).start)
+
+  let model = ''
+  try {
+    model = await $.session.model()
+  } catch {
+    // The report then names the session's model without its name.
+  }
+  const draft = draftOf(parsed, await $.clock.now(), model, personCount)
+  // A request that took longer than CHECK_STALE_MS lost its in-flight mark,
+  // and a newer request may have saved its own draft since.
+  let isOwn = false
+  await change($, id, r => {
+    isOwn = r.learningSince === started
+
+    return isOwn ? { ...r, learn: draft } : r
+  })
+  await saving
+
+  return isOwn ? draftText(draft) : REPLACED
+}
+
+/**
+ * Step two: excerpt checks of the corrected turn and of earlier turns, with
+ * today's vision and with the sentence added. Each one is a separate call
+ * on the session's model.
+ */
+async function testDraft(
+  $: $,
+  id: string,
+  vision: string,
+  started: number,
+): Promise<string> {
+  const { record: held } = await load($, id)
+  const draft = held.learn
+  if (draft === undefined) return NO_DRAFT
+  // Drops the draft and answers `text`. A request that took longer than
+  // CHECK_STALE_MS lost its in-flight mark: a newer request owns the draft
+  // now, so this one changes nothing and says so.
+  const drop = async (text: string): Promise<string> => {
+    let isOwn = false
+    await change($, id, r => {
+      isOwn = r.learningSince === started
+
+      return isOwn && r.learn?.draftedAt === draft.draftedAt ? withoutDraft(r) : r
+    })
+    await saving
+
+    return isOwn ? text : REPLACED
+  }
+
+  // The turn that starts at the draft's person message, as the draft found it.
+  const rows = await $.session.messages()
+  const failing = failingTurnAt(rows, draft.personCount, draft.quote)
+  if (failing === undefined) {
+    return drop(
+      'The turn you corrected is no longer in the session (a compaction can remove it). ' +
+        'The draft is dropped; nothing is kept.',
+    )
+  }
+  const added = addSentence(vision, draft.place, draft.sentence)
+  // The excerpt leaves out the middle of a long turn. When the agent's words
+  // fall there, no check can see them, and no model is called. Only the
+  // agent's rows count: the person can repeat the words in a message.
+  if (!excerptKeepsQuote(rows, failing, draft.quote)) {
+    const version = await pluginVersion($)
+
+    return drop(untestedReport({ draft, target: added.target, isNew: added.isNew, version }))
+  }
+
+  let model: string
+  try {
+    model = await $.session.model()
+  } catch {
+    return (
+      "The test could not run: course keeper could not read the session's model. " +
+      'The draft still waits; run /course-keeper learn yes again.'
+    )
+  }
+  const [template, head] = await Promise.all([
+    readPrompt($, 'check'),
+    readPrompt($, 'excerpt-head'),
+  ])
+  // No standing instructions: the list held now can hold one that the
+  // person's correction created. The person's messages in each excerpt
+  // show what was in force at that turn. The withdrawn instructions go in,
+  // so the check does not enforce them from those messages again.
+  const instructions = formatInstructions([], held.withdrawn)
+  const ask = async (turn: Turn, text: string): Promise<ExcerptResult> => {
+    const prompt = excerptCheckPrompt(
+      template,
+      head,
+      { vision: text, instructions },
+      sessionExcerpt(rows, turn),
+    )
+    try {
+      const reply = await $.model.complete({ model, prompt, maxTokens: 2000 })
+      if (!reply.isAnswered) {
+        return { kind: 'no result', reason: `the call ended with ${reply.reason}` }
+      }
+      const parsed = parseCheckReply(reply.text)
+
+      return parsed === undefined
+        ? { kind: 'no result', reason: 'the reply was malformed' }
+        : { kind: 'reply', reply: parsed }
+    } catch {
+      return { kind: 'no result', reason: 'the call failed' }
+    }
+  }
+
+  // The vision covers the act only when today's check alerts on the
+  // invariant that the sentence would join. An alert on another invariant
+  // or an instruction is another matter of the same turn: the test goes on.
+  const control = await ask(failing, vision)
+  // A cancel or a newer request since the start: no more calls.
+  if (!(await ownsMark($, id, started))) return REPLACED
+  if (
+    control.kind === 'reply' &&
+    control.reply.verdict === 'deviation' &&
+    !added.isNew &&
+    alertsOn(control, added.target)
+  ) {
+    return drop(coveredText(control.reply))
+  }
+
+  const earlier = earlierTurns(rows, failing)
+  const [verify, ...withSentence] = await Promise.all([
+    ask(failing, added.text),
+    ...earlier.map(turn => ask(turn, added.text)),
+  ])
+  // An earlier turn's alert counts as new only when today's vision is silent there.
+  const found = await Promise.all(
+    withSentence.map(async (result, k): Promise<{ alert?: string; missing?: string }> => {
+      const turn = earlier[k]
+      if (result.kind === 'no result') return { missing: result.reason }
+      if (turn === undefined || !alertsOn(result, added.target)) return {}
+      const today = await ask(turn, vision)
+      if (today.kind === 'no result') return { missing: today.reason }
+      if (today.reply.verdict !== 'none' || result.reply.verdict !== 'deviation') return {}
+
+      return { alert: result.reply.evidence }
+    }),
+  )
+  const tested: EarlierTest = {
+    tested: earlier.length,
+    newAlerts: found.flatMap(f => (f.alert === undefined ? [] : [f.alert])),
+    noResults: found.flatMap(f => (f.missing === undefined ? [] : [f.missing])),
+  }
+
+  const version = await pluginVersion($)
+
+  return drop(
+    learnReport({
+      draft,
+      target: added.target,
+      isNew: added.isNew,
+      control,
+      verify: verify ?? { kind: 'no result', reason: 'the call failed' },
+      earlier: tested,
+      version,
+    }),
+  )
+}
+
+/** The plugin's version from its manifest, or undefined when it cannot be read. */
+async function pluginVersion($: $): Promise<string | undefined> {
+  try {
+    const manifest: unknown = JSON.parse(
+      await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`),
+    )
+    const version =
+      typeof manifest === 'object' && manifest !== null && 'version' in manifest
+        ? manifest.version
+        : undefined
+
+    return typeof version === 'string' && clean(version, 40) !== ''
+      ? clean(version, 40)
+      : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -482,7 +830,8 @@ export const register: Register = on => {
         name: 'course-keeper',
         description:
           'Course keeper: show the vision, standing instructions and alerts',
-        argumentHint: '[check | forget <n> | off | on]',
+        argumentHint:
+          '[check | forget <n> | off | on | learn [yes | cancel | <what went wrong>]]',
       })
     } catch {
       // Without the command, the band still shows alerts.

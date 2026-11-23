@@ -1,10 +1,12 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, SessionMessage } from 'claude-code'
 
 const CHECK_TEMPLATE =
   '<!-- comment -->\nVision:\n{{vision}}\nInstructions:\n{{standing_instructions}}\nAlerts:\n{{previous_alerts}}\n'
 const EXTRACT_TEMPLATE = '<!-- comment -->\nMessage: {{message}}\n'
+const LEARN_TEMPLATE = '<!-- one -->\n\n<!-- two -->\n\nCatch: {{catch}}\nVision to learn: {{vision}}\n'
+const EXCERPT_HEAD = '<!-- comment -->\n\n<system-reminder>\nExcerpt head.\n</system-reminder>\n'
 const VISION = '# Example\n\n1. One service sets every price.\n'
 const DEVIATION = [
   '```',
@@ -44,6 +46,8 @@ type Options = {
   readWait?: Promise<void>
   /** The extract model answers once this resolves. */
   extractWait?: Promise<void>
+  /** A `$.model.complete` call answers once this resolves; asked per call (1, 2, ...). */
+  completeWait?: (n: number) => Promise<void> | undefined
   /** True: a prompt the plugin submits does not enter. */
   refuse?: () => boolean
   /** What the hooks beneath do with a prompt that is not the plugin's. */
@@ -52,10 +56,24 @@ type Options = {
   root?: string
   /** What `$.session.repo()` answers: a root, null (no repository) or a failure. */
   repo?: () => string | null | 'fail'
+  /** What `$.session.messages()` answers. */
+  messages?: () => SessionMessage[]
+  /** What `$.session.model()` answers, or a failure. */
+  model?: () => string | 'fail'
+  /**
+   * The reply of a `$.model.complete` call that is not the extract call:
+   * `unanswered` for a call cut before a reply, `fail` for a call that fails.
+   */
+  complete?: (prompt: string) => string | undefined
 }
 
 /** The engine beneath the plugin, answered from memory. */
-function world(on: On, fork: () => string, extract = 'none', options: Options = {}) {
+function world(
+  on: On,
+  fork: (prompt: string) => string,
+  extract = 'none',
+  options: Options = {},
+) {
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
   if (options.store !== false) mock.store(on)
   const forks: string[] = []
@@ -83,6 +101,9 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
       return { value: CHECK_TEMPLATE }
     }
     if (e.path.endsWith('/prompts/extract.md')) return { value: EXTRACT_TEMPLATE }
+    if (e.path.endsWith('/prompts/learn.md')) return { value: LEARN_TEMPLATE }
+    if (e.path.endsWith('/prompts/excerpt-head.md')) return { value: EXCERPT_HEAD }
+    if (e.path.endsWith('/.claude-plugin/plugin.json')) return { value: '{"version":"0.1.0"}' }
     const text = files[e.path]
 
     return text === undefined ? { deny: 'no such file' } : { value: text }
@@ -92,14 +113,30 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
     const wait = options.forkWait
     await (typeof wait === 'function' ? wait(forks.length) : wait)
 
-    return { value: { isAnswered: true, text: fork(), usage: USAGE } }
+    return { value: { isAnswered: true, text: fork(e.prompt), usage: USAGE } }
   })
   const completions: string[] = []
+  const models: string[] = []
   on('model.complete', async (_, e) => {
-    completions.push(e.prompt)
+    const prompt = e.prompt
+    completions.push(prompt)
+    models.push(e.model)
+    await options.completeWait?.(completions.length)
+    const own = options.complete?.(prompt)
+    if (own === 'unanswered') {
+      return { value: { isAnswered: false, reason: 'aborted', usage: USAGE } }
+    }
+    if (own === 'fail') return { deny: 'the API is down' }
+    if (own !== undefined) return { value: { isAnswered: true, text: own, usage: USAGE } }
     await options.extractWait
 
     return { value: { isAnswered: true, text: extract, usage: USAGE } }
+  })
+  on('session.messages', () => ({ value: options.messages?.() ?? [] }))
+  on('session.model', () => {
+    const model = options.model?.() ?? 'session-model'
+
+    return model === 'fail' ? { deny: 'no model' } : { value: model }
   })
   const notified: string[] = []
   on('ui.notify', (_, e) => {
@@ -126,7 +163,7 @@ function world(on: On, fork: () => string, extract = 'none', options: Options = 
     return { value: undefined }
   })
 
-  return { clock, forks, submitted, files, toasts, completions, notified }
+  return { clock, forks, submitted, files, toasts, completions, notified, models }
 }
 
 async function personTypes($: Engine, text: string) {
@@ -841,4 +878,663 @@ test('a store that refuses the write takes it after two old sessions are dropped
     true,
   )
   expect(held.get('session:session-a')).toMatchObject({ record: { hasPerson: true } })
+})
+
+const ROWS: SessionMessage[] = [
+  { role: 'user', text: 'Plan the pricing.', toolUses: [] },
+  { role: 'assistant', text: 'I will keep prices in the service.', toolUses: [] },
+  { role: 'user', text: 'Now add the checkout.', toolUses: [] },
+  { role: 'assistant', text: 'I will add a fallback price\n table in the client.', toolUses: [] },
+  { role: 'user', text: 'No, prices come from the service.', toolUses: [] },
+  { role: 'assistant', text: 'You are right.', toolUses: [] },
+]
+const SENTENCE =
+  'Never keep a price table in the client, for example a fallback table: ask the service.'
+const DRAFT = [
+  'result: draft',
+  'quote: "I will add a fallback price table in the client."',
+  'act: The agent planned a price table in the client.',
+  'forms: planning it, building it',
+  'variant: The agent caches discounts in the client.',
+  'place: invariant 1',
+  `sentence: ${SENTENCE}`,
+  'allowed: Showing a price that the service sent.',
+].join('\n')
+const SHOWN = [
+  'Course keeper read this as the act you corrected:',
+  '  The agent planned a price table in the client.',
+  'The agent\'s words: "I will add a fallback price table in the client."',
+  '',
+  'If this is the act: /course-keeper learn yes',
+  'If it is not: /course-keeper learn <what the agent did wrong, in your words>',
+  'To drop it: /course-keeper learn cancel',
+].join('\n')
+const NO_DRAFT = 'No draft sentence waits for an answer. Run /course-keeper learn first.'
+
+function deviation(evidence: string, reference = 'invariant 1') {
+  return [
+    'verdict: deviation',
+    `reference: ${reference}`,
+    'alert: The session keeps prices outside the service.',
+    `evidence: "${evidence}"`,
+    'note: Keep prices in the service.',
+  ].join('\n')
+}
+
+/** An excerpt check's reply: by turn, and by whether the sentence is in the vision. */
+function excerptReplies(replies: {
+  failing: [today: string, added: string]
+  earlier?: [today: string, added: string]
+}) {
+  return (prompt: string) => {
+    if (!prompt.includes('Excerpt head.')) return undefined
+    const pair = prompt.includes("## The agent's latest turn\n\nINPUT: Now add the checkout.")
+      ? replies.failing
+      : replies.earlier ?? ['verdict: none', 'verdict: none']
+
+    return prompt.includes(SENTENCE) ? pair[1] : pair[0]
+  }
+}
+
+const learnFork = (other = 'verdict: none') => (prompt: string) =>
+  prompt.includes('Catch:') ? DRAFT : other
+
+test('learn drafts a sentence, shows the act, and tests it on excerpts of the session', async ($, on) => {
+  const { forks, completions, models } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptReplies({
+      failing: ['verdict: none', deviation('I will add a fallback price table in the client.')],
+      earlier: ['verdict: none', deviation('I will keep prices in the service.')],
+    }),
+  })
+
+  expect(await command($, 'learn')).toBe(SHOWN)
+  expect(forks).toHaveLength(1)
+  // Both leading comments are gone; the fields are filled.
+  expect(forks[0]).toBe(
+    "Catch: The person gave no words with the request. Take the person's most recent correction of the agent as the catch.\n" +
+      'Vision to learn: # Example\n\n1. One service sets every price.\n\n',
+  )
+  expect(completions).toEqual([])
+
+  const report = await command($, 'learn yes')
+  expect(report).toBe(
+    [
+      'Draft sentence for VISION.md, invariant 1:',
+      `  ${SENTENCE}`,
+      '',
+      'Test on the turn you corrected: the check alerts with this sentence added.',
+      'Test on 1 earlier turn of this session: 1 new alert: "I will keep prices in the service.". Read it: such an alert can be sound.',
+      'Must stay allowed: Showing a price that the service sent.',
+      '',
+      'Where it comes from: the agent\'s words "I will add a fallback price table in the client."; drafted 2023-11-14 UTC by session-model; course keeper 0.1.0.',
+      '',
+      'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+      '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
+      '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
+      '  too broad and 4 too narrow.',
+      '- Whether an agent that reads the sentence avoids the act is not measured.',
+    ].join('\n'),
+  )
+  // Control, verify, the earlier turn with the sentence, and its control.
+  expect(completions).toHaveLength(4)
+  expect(models).toEqual(Array(4).fill('session-model'))
+  const verify = completions.find(
+    p => p.includes(SENTENCE) && p.includes('INPUT: Now add the checkout.'),
+  )
+  expect(verify).toContain(
+    '<system-reminder>\nExcerpt head.\n</system-reminder>\n\nVision:\n# Example\n\n' +
+      `1. One service sets every price.\n   ${SENTENCE}\n`,
+  )
+  expect(verify).toContain(
+    '\n\n# The session excerpts\n\n## Messages the person sent, oldest first\n\n' +
+      'Plan the pricing.\n\nNow add the checkout.\n\n' +
+      "## The agent's latest turn\n\nINPUT: Now add the checkout.\n\n" +
+      'AGENT: I will add a fallback price\n table in the client.',
+  )
+  expect(verify).not.toContain('No, prices come from the service.')
+
+  // The draft is gone; checks and alerts are untouched; nothing reached the agent.
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+  const shown = await status($)
+  expect(shown).toContain('Alerts in this session:\n  none')
+  expect(shown).toContain('Last check: none yet.')
+})
+
+test('learn passes the person\'s words as the catch', async ($, on) => {
+  const { forks } = world(on, learnFork(), 'none', { messages: () => ROWS })
+
+  expect(await command($, 'learn   it put a price\ntable in the client ')).toBe(SHOWN)
+  expect(forks[0]).toContain(
+    'Catch: The person described the act in these words: "it put a price table in the client"\n',
+  )
+})
+
+test('a draft whose quote is not in the agent\'s replies is not shown', async ($, on) => {
+  const { forks } = world(on, learnFork(), 'none', {
+    messages: () => ROWS.map(r => (r.role === 'assistant' ? { ...r, text: 'Other words.' } : r)),
+  })
+
+  const answer = await command($, 'learn')
+  expect(answer).toContain("The draft quoted words that are not in the agent's replies")
+  expect(answer).not.toContain('price table')
+  expect(forks).toHaveLength(1)
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('learn without VISION.md runs nothing', async ($, on) => {
+  const { forks, files } = world(on, learnFork(), 'none', { messages: () => ROWS })
+  delete files['/work/repo/VISION.md']
+
+  expect(await command($, 'learn')).toBe(
+    'No VISION.md found. /course-keeper learn does not run without it.',
+  )
+  expect(forks).toHaveLength(0)
+})
+
+test('a none reply and a malformed reply are said plainly', async ($, on) => {
+  let reply = 'result: none\nreason: The person asked for a matter of taste.'
+  world(on, () => reply, 'none', { messages: () => ROWS })
+
+  expect(await command($, 'learn')).toBe(
+    'No sentence drafted: The person asked for a matter of taste.\n' +
+      'To give the act in your words: /course-keeper learn <what the agent did wrong>',
+  )
+  reply = 'result: draft\nquote: "x"'
+  expect(await command($, 'learn')).toContain('No sentence drafted: the draft reply was malformed.')
+})
+
+test('learn yes stops when the check already alerts on the turn with today\'s vision', async ($, on) => {
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptReplies({
+      failing: [deviation('I will add a fallback price table in the client.'), 'verdict: none'],
+    }),
+  })
+
+  await command($, 'learn')
+  const answer = await command($, 'learn yes')
+  expect(answer).toBe(
+    "The check already alerts on the turn you corrected with today's vision (invariant 1): " +
+      'The session keeps prices outside the service. Evidence: "I will add a fallback price table in the client.". ' +
+      'If this alert is about the act you corrected, the vision already covers the act, so no sentence is offered. ' +
+      'If the alert is about another matter, run /course-keeper learn <the act in words> again. The draft is dropped.',
+  )
+  expect(answer).not.toContain(SENTENCE)
+  expect(completions).toHaveLength(1)
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('cancel drops the draft', async ($, on) => {
+  world(on, learnFork(), 'none', { messages: () => ROWS })
+
+  expect(await command($, 'learn cancel')).toBe(NO_DRAFT)
+  await command($, 'learn')
+  expect(await command($, 'learn cancel')).toBe('The draft sentence is dropped.')
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('without the session\'s model the test does not run and the draft waits', async ($, on) => {
+  let model: string | 'fail' = 'session-model'
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    model: () => model,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+  })
+
+  await command($, 'learn')
+  model = 'fail'
+  expect(await command($, 'learn yes')).toContain(
+    "The test could not run: course keeper could not read the session's model.",
+  )
+  expect(completions).toHaveLength(0)
+  model = 'session-model'
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    'Test on the turn you corrected: the check stays silent with this sentence added. The sentence is not verified.',
+  )
+  expect(report).toContain('Test on 1 earlier turn of this session: no new alert.')
+})
+
+test('a turn that compaction removed keeps nothing', async ($, on) => {
+  let rows = ROWS
+  const { completions } = world(on, learnFork(), 'none', { messages: () => rows })
+
+  await command($, 'learn')
+  rows = [
+    { role: 'user', text: 'This session is being continued from a previous conversation. A summary.', toolUses: [] },
+    { role: 'assistant', text: 'Going on.', toolUses: [] },
+  ]
+  expect(await command($, 'learn yes')).toBe(
+    'The turn you corrected is no longer in the session (a compaction can remove it). ' +
+      'The draft is dropped; nothing is kept.',
+  )
+  expect(completions).toHaveLength(0)
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('a learn step in flight blocks another but not a check', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, forks } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    forkWait: n => (n === 1 ? gate : undefined),
+  })
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  const first = command($, 'learn')
+  await settle(clock)
+  expect(await command($, 'learn')).toBe(
+    'A learn step is already running in this session. Wait for its answer.',
+  )
+  await $.turn.complete(END)
+  await settle(clock)
+  expect(forks).toHaveLength(2)
+  expect(await status($)).toContain('verdict: none.')
+  release()
+  expect(await first).toBe(SHOWN)
+  // The mark is cleared once the step ends.
+  expect(await command($, 'learn')).toBe(SHOWN)
+})
+
+test('a stale learn mark does not block', async ($, on) => {
+  const { clock, forks } = world(on, learnFork(), 'none', { messages: () => ROWS })
+  let held: unknown = {
+    v: 1,
+    hasPerson: true,
+    isOff: false,
+    instructions: [],
+    alerts: [],
+    current: null,
+    showDetails: false,
+    lastCheck: null,
+    checkingSince: null,
+    learningSince: clock.now() - 10 * 60 * 1000,
+  }
+  let version = 1
+  on('state.get', () => ({ value: { value: held, version } }))
+  on('state.set', (_, e) => {
+    if (e.ifVersion !== undefined && e.ifVersion !== version) {
+      return { value: { isSet: false, version } }
+    }
+    held = e.value
+    version += 1
+
+    return { value: { isSet: true, version } }
+  })
+
+  expect(await command($, 'learn')).toBe(SHOWN)
+  expect(forks).toHaveLength(1)
+  held = { ...(held as object), learningSince: clock.now() - 1000 }
+  expect(await command($, 'learn')).toContain('A learn step is already running')
+})
+
+/** Excerpt check replies by turn and vision; any of them can be `unanswered` or `fail`. */
+function excerptBy(pick: (turn: 'failing' | 'earlier', added: boolean) => string) {
+  return (prompt: string) => {
+    if (!prompt.includes('Excerpt head.')) return undefined
+    const turn = prompt.includes("## The agent's latest turn\n\nINPUT: Now add the checkout.")
+      ? 'failing'
+      : 'earlier'
+
+    return pick(turn, prompt.includes(SENTENCE))
+  }
+}
+
+test('a call that is cut or malformed counts as no result, never as silent', async ($, on) => {
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) =>
+      turn === 'failing' ? (added ? 'not a check reply' : 'unanswered') : 'verdict: none',
+    ),
+  })
+
+  await command($, 'learn')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    "Check with today's vision on the turn you corrected: no result (the call ended with aborted).",
+  )
+  expect(report).toContain('Test on the turn you corrected: no result (the reply was malformed).')
+  expect(report).not.toContain('stays silent')
+  expect(report).toContain('Test on 1 earlier turn of this session: no new alert.')
+  expect(completions).toHaveLength(3)
+})
+
+test('a call that fails on the corrected turn or on an earlier turn is no result', async ($, on) => {
+  world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) =>
+      turn === 'failing' ? (added ? 'unanswered' : 'verdict: none') : 'fail',
+    ),
+  })
+
+  await command($, 'learn')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    'Test on the turn you corrected: no result (the call ended with aborted).',
+  )
+  expect(report).toContain(
+    'Test on 1 earlier turn of this session: no result (the call failed).',
+  )
+  expect(report).not.toContain('no new alert')
+})
+
+test('an earlier alert counts as new only when today\'s vision is silent there', async ($, on) => {
+  let today = deviation('I will keep prices in the service.')
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) => {
+      if (turn === 'failing') {
+        return added ? deviation('I will add a fallback price table in the client.') : 'verdict: none'
+      }
+
+      return added ? deviation('I will keep prices in the service.') : today
+    }),
+  })
+
+  await command($, 'learn')
+  expect(await command($, 'learn yes')).toContain(
+    'Test on 1 earlier turn of this session: no new alert.',
+  )
+  // Control, verify, the earlier turn with the sentence, and its control.
+  expect(completions).toHaveLength(4)
+
+  today = 'unanswered'
+  await command($, 'learn')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(
+    'Test on 1 earlier turn of this session: no result (the call ended with aborted).',
+  )
+  expect(report).not.toContain('new alert')
+})
+
+test('the failing turn is the one before the correction when the agent repeats its words', async ($, on) => {
+  const rows: SessionMessage[] = [
+    ...ROWS.slice(0, 5),
+    {
+      role: 'assistant',
+      text: 'You are right; I wrote "I will add a fallback price table in the client." That is wrong.',
+      toolUses: [],
+    },
+  ]
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => rows,
+    complete: excerptReplies({
+      failing: ['verdict: none', deviation('I will add a fallback price table in the client.')],
+    }),
+  })
+
+  await command($, 'learn')
+  expect(await command($, 'learn yes')).toContain(
+    'Test on the turn you corrected: the check alerts with this sentence added.',
+  )
+  const verify = completions.find(p => p.includes(SENTENCE) && p.includes('AGENT: I will add'))
+  expect(verify).toBeDefined()
+  expect(verify).not.toContain('You are right')
+})
+
+test('the learn fork gets the agent\'s final answer of the last turn', async ($, on) => {
+  const { clock, forks } = world(on, learnFork(), 'none', { messages: () => ROWS })
+
+  await personTypes($, 'Now add the checkout.')
+  await settle(clock)
+  await $.turn.start({ text: 'Now add the checkout.', turnId: 'turn-1' })
+  await $.turn.complete(END)
+  await settle(clock)
+  forks.length = 0
+
+  await command($, 'learn')
+  expect(forks).toHaveLength(1)
+  expect(forks[0]).toContain(
+    '<final_answer>\nI will add a fallback price table in the client.\n</final_answer>\n\nCatch:',
+  )
+
+  // When the next turn started since, the fork's last request is that turn's.
+  await $.turn.start({ text: 'go on', turnId: 'turn-2' })
+  forks.length = 0
+  await command($, 'learn')
+  expect(forks[0]).not.toContain('<final_answer>')
+})
+
+test('a control alert on another matter of the turn does not stop the test', async ($, on) => {
+  let control = deviation('I will add a fallback price table in the client.', 'instruction "keep the client small"')
+  let reply = DRAFT
+  const { completions } = world(on, prompt => (prompt.includes('Catch:') ? reply : 'verdict: none'), 'none', {
+    messages: () => ROWS,
+    complete: excerptBy((turn, added) => {
+      if (turn === 'earlier') return 'verdict: none'
+
+      return added ? deviation('I will add a fallback price table in the client.', 'invariant 2') : control
+    }),
+  })
+
+  // An alert on an instruction: the test goes on and the report says so.
+  await command($, 'learn')
+  let report = await command($, 'learn yes')
+  expect(report).toContain(
+    'With today\'s vision the check alerts on this turn on instruction "keep the client small", ' +
+      'another matter: "The session keeps prices outside the service.".\n' +
+      'Test on the turn you corrected: the check alerts on invariant 2, not on invariant 1,',
+  )
+  // Control, verify, and the earlier turn with the sentence.
+  expect(completions).toHaveLength(3)
+
+  // A new invariant: an alert on its number is another matter too.
+  reply = DRAFT.replace('place: invariant 1', 'place: new')
+  control = deviation('I will add a fallback price table in the client.', 'invariant 2')
+  await command($, 'learn')
+  report = await command($, 'learn yes')
+  expect(report).toContain('Draft sentence for VISION.md, as a new invariant:')
+  expect(report).toContain(
+    "With today's vision the check alerts on this turn on invariant 2, another matter:",
+  )
+  expect(report).toContain('Test on the turn you corrected: the check alerts with this sentence added.')
+})
+
+test('the excerpt checks get no standing instructions', async ($, on) => {
+  const { clock, completions, toasts } = world(on, learnFork(), '- keep prices in the service, always', {
+    messages: () => ROWS,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+  })
+
+  await personTypes($, 'keep prices in the service, always')
+  await settle(clock)
+  expect(toasts).toHaveLength(1)
+  await command($, 'learn')
+  await command($, 'learn yes')
+  const excerpts = completions.filter(p => p.includes('Excerpt head.'))
+  expect(excerpts).toHaveLength(3)
+  for (const prompt of excerpts) {
+    expect(prompt).toContain('Instructions:\nNone listed. Use what the person said in this session.\nAlerts:')
+    expect(prompt).not.toContain('keep prices in the service, always')
+  }
+})
+
+test('the excerpt checks are told not to enforce a withdrawn instruction', async ($, on) => {
+  const { clock, completions } = world(on, learnFork(), '- keep prices in the service, always', {
+    messages: () => ROWS,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+  })
+
+  await personTypes($, 'keep prices in the service, always')
+  await settle(clock)
+  expect(await command($, 'forget 1')).toBe(
+    'Standing instruction 1 removed: "keep prices in the service, always"',
+  )
+  await command($, 'learn')
+  await command($, 'learn yes')
+  const excerpts = completions.filter(p => p.includes('Excerpt head.'))
+  expect(excerpts).toHaveLength(3)
+  for (const prompt of excerpts) {
+    expect(prompt).toContain(
+      'Instructions:\nNone listed. Use what the person said in this session.\n\n' +
+        'Withdrawn by the person; do not enforce these:\n' +
+        '- keep prices in the service, always\nAlerts:',
+    )
+  }
+})
+
+test('learn yes tests the turn the draft found, not a later reply that repeats the quote', async ($, on) => {
+  let rows = ROWS
+  const { completions } = world(on, learnFork(), 'none', {
+    messages: () => rows,
+    complete: excerptReplies({
+      failing: ['verdict: none', deviation('I will add a fallback price table in the client.')],
+    }),
+  })
+
+  await command($, 'learn')
+  // After the draft, the agent repeats its words in a later turn.
+  rows = [
+    ...ROWS,
+    { role: 'user', text: 'Quote what you wrote.', toolUses: [] },
+    { role: 'assistant', text: 'I wrote: "I will add a fallback price table in the client."', toolUses: [] },
+    { role: 'user', text: 'Thanks, go on.', toolUses: [] },
+    { role: 'assistant', text: 'Going on.', toolUses: [] },
+  ]
+  expect(await command($, 'learn yes')).toContain(
+    'Test on the turn you corrected: the check alerts with this sentence added.',
+  )
+  const verify = completions.find(p => p.includes(SENTENCE) && p.includes("## The agent's latest turn"))
+  expect(verify).toContain("## The agent's latest turn\n\nINPUT: Now add the checkout.")
+  expect(completions.some(p => p.includes("## The agent's latest turn\n\nINPUT: Quote what you wrote."))).toBe(false)
+
+  // The turn at the draft's person message no longer holds the quote.
+  rows = ROWS
+  await command($, 'learn')
+  completions.length = 0
+  rows = ROWS.map((r, k) =>
+    k === 3 ? { ...r, text: 'Other words.' } : k === 5 ? { ...r, text: 'I will add a fallback price table in the client.' } : r,
+  )
+  expect(await command($, 'learn yes')).toBe(
+    'The turn you corrected is no longer in the session (a compaction can remove it). ' +
+      'The draft is dropped; nothing is kept.',
+  )
+  expect(completions).toHaveLength(0)
+})
+
+test('a turn too long for the excerpt is not tested when the agent\'s words fall in its middle', async ($, on) => {
+  const long = ROWS.map((r, k) =>
+    k === 3
+      ? { ...r, text: `${'x'.repeat(30000)} I will add a fallback price table in the client. ${'y'.repeat(50000)}` }
+      : r,
+  )
+  const { completions } = world(on, learnFork(), 'none', { messages: () => long })
+
+  expect(await command($, 'learn')).toBe(SHOWN)
+  const answer = await command($, 'learn yes')
+  expect(answer).toContain(
+    "The turn you corrected is too long for the test. The agent's words fall in the part that the excerpt leaves out, " +
+      'so the sentence could not be tested. The draft is dropped.\n\n' +
+      `Draft sentence for VISION.md, invariant 1 (not tested):\n  ${SENTENCE}\n`,
+  )
+  expect(answer).toContain('This is a draft for the owners of VISION.md. Course keeper does not change the file.')
+  expect(completions).toHaveLength(0)
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('a person message that repeats the agent\'s words does not make a long turn testable', async ($, on) => {
+  const quote = 'I will add a fallback price table in the client.'
+  const long = ROWS.map((r, k) =>
+    k === 2
+      ? { ...r, text: `Now add the checkout. Never say "${quote}"` }
+      : k === 3
+        ? { ...r, text: `${'x'.repeat(30000)} ${quote} ${'y'.repeat(50000)}` }
+        : r,
+  )
+  const { completions } = world(on, learnFork(), 'none', { messages: () => long })
+
+  expect(await command($, 'learn')).toBe(SHOWN)
+  expect(await command($, 'learn yes')).toContain(
+    "The turn you corrected is too long for the test. The agent's words fall in the part that the excerpt leaves out",
+  )
+  expect(completions).toHaveLength(0)
+})
+
+test('cancel during learn yes stops its calls and keeps nothing', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, completions } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+    completeWait: n => (n === 1 ? gate : undefined),
+  })
+
+  await command($, 'learn')
+  const first = command($, 'learn yes')
+  await settle(clock)
+  expect(await command($, 'learn cancel')).toBe('The draft sentence is dropped.')
+  release()
+  expect(await first).toBe('A newer learn request replaced this one.')
+  // Only the control call ran.
+  expect(completions).toHaveLength(1)
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+})
+
+test('cancel during the draft fork keeps the draft from being saved', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    forkWait: n => (n === 1 ? gate : undefined),
+  })
+
+  const first = command($, 'learn')
+  await settle(clock)
+  expect(await command($, 'learn cancel')).toBe('The learn step in flight is cancelled.')
+  release()
+  expect(await first).toBe('A newer learn request replaced this one.')
+  expect(await command($, 'learn yes')).toBe(NO_DRAFT)
+  expect(await command($, 'learn cancel')).toBe(NO_DRAFT)
+})
+
+test('a learn request that lost its mark does not save its draft over a newer one', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let reply = DRAFT
+  const { clock } = world(on, prompt => (prompt.includes('Catch:') ? reply : 'verdict: none'), 'none', {
+    messages: () => ROWS,
+    forkWait: n => (n === 1 ? gate : undefined),
+  })
+
+  const first = command($, 'learn')
+  await settle(clock)
+  // The first request's mark goes stale, so a newer one runs.
+  await clock.advance(6 * 60 * 1000)
+  expect(await command($, 'learn')).toBe(SHOWN)
+  reply = DRAFT.replace(SENTENCE, 'Never put prices anywhere.')
+  release()
+  expect(await first).toBe('A newer learn request replaced this one.')
+  const report = await command($, 'learn yes')
+  expect(report).toContain(`  ${SENTENCE}`)
+  expect(report).not.toContain('Never put prices anywhere.')
+})
+
+test('a learn yes that lost its mark answers that a newer request replaced it', async ($, on) => {
+  let release = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock } = world(on, learnFork(), 'none', {
+    messages: () => ROWS,
+    complete: excerptReplies({ failing: ['verdict: none', 'verdict: none'] }),
+    completeWait: n => (n === 1 ? gate : undefined),
+  })
+
+  await command($, 'learn')
+  const first = command($, 'learn yes')
+  await settle(clock)
+  await clock.advance(6 * 60 * 1000)
+  expect(await command($, 'learn yes')).toContain('Draft sentence for VISION.md, invariant 1:')
+  release()
+  expect(await first).toBe('A newer learn request replaced this one.')
 })

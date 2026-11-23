@@ -2,9 +2,12 @@
 // cleaning, prompt filling, reply parsing and the list rules. The hooks
 // module calls these; the tests call them directly.
 
+import type { SessionMessage } from 'claude-code'
+
 import type {
   CourseKeeperAlert,
   CourseKeeperAnswer,
+  CourseKeeperDraft,
   CourseKeeperSession,
 } from '../types'
 
@@ -94,6 +97,19 @@ export function clean(text: string, max: number): string {
 /** Removes one HTML comment at the start of a prompt file. */
 export function stripLeadingComment(text: string): string {
   return text.replace(/^\s*<!--[\s\S]*?-->[ \t]*\r?\n?/, '').replace(/^\s+/, '')
+}
+
+/**
+ * Removes every HTML comment at the start of a prompt file. The learn prompt
+ * holds two: the plugin's own, and the one of the measured prompt below it.
+ */
+export function stripLeadingComments(text: string): string {
+  let out = text
+  for (;;) {
+    const next = stripLeadingComment(out)
+    if (next === out) return out
+    out = next
+  }
 }
 
 /** Fills the three fields of the check prompt in one pass. */
@@ -656,6 +672,12 @@ export function normalizeRecord(value: unknown): CourseKeeperSession {
         .slice(-MAX_ALERTS)
     : []
   const current = readAlert(value.current) ?? null
+  // Both absent in a record written before the learn step existed.
+  const learn = readDraft(value.learn)
+  const learningSince =
+    typeof value.learningSince === 'number' && Number.isFinite(value.learningSince)
+      ? value.learningSince
+      : undefined
   const last = value.lastCheck
   const lastCheck =
     isObject(last) &&
@@ -679,6 +701,8 @@ export function normalizeRecord(value: unknown): CourseKeeperSession {
       typeof value.checkingSince === 'number' && Number.isFinite(value.checkingSince)
         ? value.checkingSince
         : null,
+    ...(learningSince === undefined ? {} : { learningSince }),
+    ...(learn === undefined ? {} : { learn }),
   }
 }
 
@@ -696,4 +720,747 @@ export function oldestKeys(
     .sort((a, b) => b.savedAt - a.savedAt)
     .slice(keep)
     .map(entry => entry.key)
+}
+
+// The learn step: `/course-keeper learn` drafts one "Never" sentence for
+// VISION.md from the agent's failing reply and tests it on excerpts of the
+// session. It shows the draft to the person and changes nothing else.
+
+/** The most characters kept of each field of a learn reply. */
+export const LEARN_LIMITS = {
+  quote: 600,
+  act: 300,
+  forms: 300,
+  variant: 300,
+  place: 40,
+  sentence: 700,
+  allowed: 300,
+  reason: 300,
+} as const
+export const MAX_CATCH_LENGTH = 600
+export const NO_CATCH =
+  "The person gave no words with the request. Take the person's most recent correction of the agent as the catch."
+/** How a compaction summary starts, as the engine writes it. */
+export const COMPACTION_START =
+  'This session is being continued from a previous conversation'
+/** How many earlier turns the learn step tests the sentence on. */
+export const MAX_EARLIER_TURNS = 3
+
+/** The catch field of the learn prompt. */
+export function catchText(words: string): string {
+  const text = clean(words, MAX_CATCH_LENGTH)
+
+  return text === ''
+    ? NO_CATCH
+    : `The person described the act in these words: "${text}"`
+}
+
+/** Fills the two fields of the learn prompt in one pass. */
+export function fillLearnPrompt(
+  template: string,
+  fields: { vision: string; catch: string },
+): string {
+  const values: Record<string, string> = fields
+
+  return template.replace(
+    /\{\{(vision|catch)\}\}/g,
+    (_, name: string) => values[name] ?? '',
+  )
+}
+
+export type LearnReply =
+  | { result: 'none'; reason: string }
+  | {
+      result: 'draft'
+      quote: string
+      act: string
+      forms: string
+      variant: string
+      place: string
+      sentence: string
+      allowed: string
+    }
+
+const LEARN_FIELD =
+  /^(result|quote|act|forms|variant|place|sentence|allowed|reason)\s*:\s*(.*)$/i
+const PLACE = {
+  invariant: /^[`*_]*invariant\s+(\d+)\b/i,
+  new: /^[`*_]*new\b/i,
+}
+
+/** `invariant <number>` or `new`, or undefined when the field is neither. */
+function canonicalPlace(field: string): string | undefined {
+  const invariant = PLACE.invariant.exec(field)
+  if (invariant) return `invariant ${Number(invariant[1])}`
+
+  return PLACE.new.test(field) ? 'new' : undefined
+}
+
+/**
+ * Reads a learn reply. The first occurrence of a field wins; a repeat and
+ * the lines that continue it are dropped. Returns undefined for a malformed
+ * reply: an unknown result, or a draft without a quote, an act, a place of
+ * the form `invariant <number>` or `new`, or a sentence that starts with
+ * "Never".
+ */
+export function parseLearnReply(reply: string): LearnReply | undefined {
+  const fields = new Map<string, string>()
+  let last: string | undefined
+
+  for (const raw of reply.split(/\r?\n/)) {
+    const line = raw.trim()
+
+    if (line.startsWith('```')) {
+      last = undefined
+      continue
+    }
+    if (line === '') continue
+
+    const match = LEARN_FIELD.exec(line)
+    if (match) {
+      const name = (match[1] ?? '').toLowerCase()
+      if (fields.has(name)) {
+        last = undefined
+        continue
+      }
+      fields.set(name, match[2] ?? '')
+      last = name
+    } else if (last !== undefined) {
+      fields.set(last, `${fields.get(last) ?? ''} ${line}`)
+    }
+  }
+
+  const field = (name: keyof typeof LEARN_LIMITS) =>
+    clean(fields.get(name) ?? '', LEARN_LIMITS[name])
+  const result = clean(fields.get('result') ?? '', 20)
+    .toLowerCase()
+    .replace(/[^a-z]/g, '')
+
+  if (result === 'none') return { result: 'none', reason: field('reason') }
+  if (result !== 'draft') return undefined
+
+  const quote = clean(unquote(fields.get('quote') ?? ''), LEARN_LIMITS.quote)
+  const act = field('act')
+  const sentence = field('sentence')
+  const place = canonicalPlace(clean(fields.get('place') ?? '', Infinity))
+
+  if (quote === '' || act === '' || sentence === '' || place === undefined) {
+    return undefined
+  }
+  if (!/^never\b/i.test(sentence)) return undefined
+
+  return {
+    result: 'draft',
+    quote,
+    act,
+    forms: field('forms'),
+    variant: field('variant'),
+    place,
+    sentence,
+    allowed: field('allowed'),
+  }
+}
+
+function collapse(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * True when the text holds the quote word for word, with runs of whitespace
+ * counted as one space. An empty quote is in no text.
+ */
+export function holdsQuote(text: string, quote: string): boolean {
+  const wanted = collapse(quote)
+
+  return wanted !== '' && collapse(text).includes(wanted)
+}
+
+/**
+ * The index of the last assistant row whose text holds the quote word for
+ * word, with runs of whitespace counted as one space; -1 when none does.
+ */
+export function findQuote(rows: readonly SessionMessage[], quote: string): number {
+  return rows.findLastIndex(row => row.role === 'assistant' && holdsQuote(row.text, quote))
+}
+
+/**
+ * The failing reply of a draft: the last assistant row that holds the quote
+ * (as `findQuote` reads it) and that comes before the last person message.
+ * The agent's answer to the correction can repeat the words it is corrected
+ * for, so a row in the newest turn counts only when no earlier row holds the
+ * quote. -1 when no row holds it.
+ */
+export function failingRow(rows: readonly SessionMessage[], quote: string): number {
+  const wanted = collapse(quote)
+  if (wanted === '') return -1
+  const newest = rows.findLastIndex((_, k) => isPersonMessage(rows[k], rows[k - 1]))
+  const before = rows.findLastIndex(
+    (row, k) => k < newest && row.role === 'assistant' && collapse(row.text).includes(wanted),
+  )
+
+  return before >= 0 ? before : findQuote(rows, quote)
+}
+
+function isCompactionSummary(row: SessionMessage): boolean {
+  return row.role === 'user' && row.text.trimStart().startsWith(COMPACTION_START)
+}
+
+/**
+ * True for a message the person sent: a user row with text and no tool
+ * results that is neither an engine notice (it starts with `<`) nor a
+ * compaction summary. A user row right after a row of tool results is not
+ * one either: the engine put it there inside the agent's turn (a skill's
+ * text after the skill's tool call, say).
+ */
+export function isPersonMessage(
+  row: SessionMessage | undefined,
+  previous?: SessionMessage,
+): boolean {
+  if (row === undefined || row.role !== 'user') return false
+  if ((row.toolResults?.length ?? 0) > 0) return false
+  if (previous?.role === 'user' && (previous.toolResults?.length ?? 0) > 0) return false
+  const text = row.text.trimStart()
+
+  return text !== '' && !text.startsWith('<') && !text.startsWith(COMPACTION_START)
+}
+
+/** The first and the last row of a turn, both included. */
+export type Turn = { start: number; end: number }
+
+/**
+ * The turns of a transcript, oldest first. Each person message starts a
+ * turn; the rows before the first one form a turn of their own. A turn
+ * ends at its last assistant row: the rows after it (engine notices, the
+ * rows of a command) are not part of the agent's turn. A turn without an
+ * assistant row runs to the row before the next person message.
+ */
+export function turnsOf(rows: readonly SessionMessage[]): Turn[] {
+  const turns: Turn[] = []
+  let start = 0
+  for (let k = 1; k <= rows.length; k += 1) {
+    if (k === rows.length || isPersonMessage(rows[k], rows[k - 1])) {
+      let end = k - 1
+      while (end > start && rows[end]?.role !== 'assistant') end -= 1
+      turns.push({ start, end: rows[end]?.role === 'assistant' ? end : k - 1 })
+      start = k
+    }
+  }
+
+  return turns
+}
+
+/** The turn that holds row `i`. */
+export function turnOf(rows: readonly SessionMessage[], i: number): Turn {
+  return (
+    turnsOf(rows).find(turn => turn.start <= i && i <= turn.end) ?? { start: i, end: i }
+  )
+}
+
+/** How many person messages the rows hold up to and including row `start`. */
+export function personCountAt(rows: readonly SessionMessage[], start: number): number {
+  let count = 0
+  for (let k = 0; k <= start && k < rows.length; k += 1) {
+    if (isPersonMessage(rows[k], rows[k - 1])) count += 1
+  }
+
+  return count
+}
+
+/**
+ * The turn that starts at person message number `personCount` (0: the rows
+ * before the first person message), when one of its assistant rows holds the
+ * quote; undefined otherwise. A draft stores the number, so a later reply
+ * that repeats the quote does not move the failing turn.
+ */
+export function failingTurnAt(
+  rows: readonly SessionMessage[],
+  personCount: number,
+  quote: string,
+): Turn | undefined {
+  const turn = turnsOf(rows).find(t => personCountAt(rows, t.start) === personCount)
+  if (turn === undefined) return undefined
+  const holds = rows
+    .slice(turn.start, turn.end + 1)
+    .some(row => row.role === 'assistant' && holdsQuote(row.text, quote))
+
+  return holds ? turn : undefined
+}
+
+/**
+ * Up to `max` turns that ended before `turn` started and hold an assistant
+ * row, newest first.
+ */
+export function earlierTurns(
+  rows: readonly SessionMessage[],
+  turn: Turn,
+  max = MAX_EARLIER_TURNS,
+): Turn[] {
+  return turnsOf(rows)
+    .filter(
+      t =>
+        t.end < turn.start &&
+        rows.slice(t.start, t.end + 1).some(row => row.role === 'assistant'),
+    )
+    .reverse()
+    .slice(0, max)
+}
+
+function head(text: string, max: number): string {
+  const chars = Array.from(text)
+
+  return chars.length <= max ? text : chars.slice(0, max).join('')
+}
+
+/** The text whole, or its first `first` and last `rest` characters around `mark`. */
+function cutMiddle(text: string, max: number, first: number, rest: number, mark: string) {
+  const chars = Array.from(text)
+
+  return chars.length <= max
+    ? text
+    : `${chars.slice(0, first).join('')}${mark}${chars.slice(-rest).join('')}`
+}
+
+function json(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** One row of a turn as the excerpt shows it; '' for a row with nothing in it. */
+function rowText(row: SessionMessage): string {
+  const parts = row.text.trim() === '' ? [] : [row.text]
+  if (row.role === 'assistant') {
+    for (const use of row.toolUses) {
+      parts.push(`[tool call ${use.tool}: ${head(json(use.input), 1500)}]`)
+    }
+  } else {
+    for (const result of row.toolResults ?? []) {
+      parts.push(`[tool result: ${head(result.text, 1500)}]`)
+    }
+  }
+  const text = parts.join('\n')
+  if (text.trim() === '') return ''
+
+  return `${row.role === 'assistant' ? 'AGENT' : 'INPUT'}: ${text}`
+}
+
+// The excerpt keeps at most LATEST_MAX characters of a turn: the first
+// LATEST_FIRST and the last LATEST_LAST, around LATEST_CUT.
+const LATEST_MAX = 60000
+const LATEST_FIRST = 20000
+const LATEST_LAST = 40000
+const LATEST_CUT = '\n\n[... middle of the turn left out ...]\n\n'
+const PART_SEPARATOR = '\n\n'
+
+/** The rows of a turn as the excerpt shows them, with the role of each. */
+function latestParts(
+  rows: readonly SessionMessage[],
+  turn: Turn,
+): { role: SessionMessage['role']; text: string }[] {
+  return rows
+    .slice(turn.start, turn.end + 1)
+    .filter(row => !isCompactionSummary(row))
+    .map(row => ({ role: row.role, text: rowText(row) }))
+    .filter(part => part.text !== '')
+}
+
+/**
+ * The excerpt of the session that an excerpt check reads for one turn: the
+ * newest compaction summary before the turn's end, every person message up
+ * to the turn's first row in order, and the rows of the turn.
+ */
+export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): string {
+  let summary: string | undefined
+  const person: string[] = []
+  for (let k = 0; k <= turn.end && k < rows.length; k += 1) {
+    const row = rows[k]
+    if (row === undefined) continue
+    if (isCompactionSummary(row)) summary = row.text.trim()
+    // A message the person repeats stays: it can restate an instruction.
+    if (k <= turn.start && isPersonMessage(row, rows[k - 1])) person.push(row.text.trim())
+  }
+
+  const latest = latestParts(rows, turn)
+    .map(part => part.text)
+    .join(PART_SEPARATOR)
+
+  const sections: string[] = []
+  if (summary !== undefined) {
+    sections.push(
+      '## Summary that replaced the earlier conversation\n\n' +
+        cutMiddle(summary, 40000, 28000, 12000, '\n[... cut ...]\n'),
+    )
+  }
+  sections.push(
+    '## Messages the person sent, oldest first\n\n' +
+      (person.length === 0
+        ? '(none in this part of the session)'
+        : person.map(text => head(text, 3000)).join('\n\n')),
+  )
+  sections.push(
+    "## The agent's latest turn\n\n" +
+      cutMiddle(latest, LATEST_MAX, LATEST_FIRST, LATEST_LAST, LATEST_CUT),
+  )
+
+  return sections.join('\n\n')
+}
+
+/**
+ * True when an agent row of the turn holds the quote in the part that the
+ * excerpt keeps of the turn. Person messages and input rows do not count. A
+ * quote that the cut splits does not count either.
+ */
+export function excerptKeepsQuote(
+  rows: readonly SessionMessage[],
+  turn: Turn,
+  quote: string,
+): boolean {
+  const parts = latestParts(rows, turn).map(part => ({
+    role: part.role,
+    chars: Array.from(part.text),
+  }))
+  const separator = Array.from(PART_SEPARATOR).length
+  const total = parts.reduce(
+    (sum, part, k) => sum + part.chars.length + (k > 0 ? separator : 0),
+    0,
+  )
+  const isCut = total > LATEST_MAX
+  let start = 0
+  for (const part of parts) {
+    const at = start
+    start += part.chars.length + separator
+    if (part.role !== 'assistant') continue
+    // The characters of this row before the cut and after it.
+    const kept = isCut
+      ? [
+          part.chars.slice(0, Math.max(0, LATEST_FIRST - at)),
+          part.chars.slice(Math.max(0, total - LATEST_LAST - at)),
+        ]
+      : [part.chars]
+    if (kept.some(chars => holdsQuote(chars.join(''), quote))) return true
+  }
+
+  return false
+}
+
+const LEADING_REMINDER = /^\s*<system-reminder>[\s\S]*?<\/system-reminder>/
+
+/**
+ * The prompt of an excerpt check: the check prompt with its leading
+ * system-reminder block replaced by `head`, the fields filled, and the
+ * excerpt after it. Both templates come without their leading comments.
+ */
+export function excerptCheckPrompt(
+  template: string,
+  head: string,
+  fields: { vision: string; instructions: string },
+  excerpt: string,
+): string {
+  const top = head.trim()
+  const body = LEADING_REMINDER.test(template)
+    ? template.replace(LEADING_REMINDER, () => top)
+    : `${top}\n\n${template}`
+  const filled = fillCheckPrompt(body, {
+    vision: fields.vision,
+    instructions: fields.instructions,
+    alerts: NO_ALERTS,
+  })
+
+  return `${filled}\n\n# The session excerpts\n\n${excerpt}`
+}
+
+const ITEM = /^\s*(\d+)[.)]\s/
+
+/**
+ * The vision with the sentence added. For `invariant <n>` the sentence goes
+ * on its own line, indented three spaces, at the end of item n: before the
+ * next blank line or the next numbered item. For `new`, or when the vision
+ * has no item n, it goes at the end as item m+1, where m is the highest item
+ * number. `target` is the number of the item that holds the sentence.
+ */
+export function addSentence(
+  vision: string,
+  place: string,
+  sentence: string,
+): { text: string; target: number; isNew: boolean } {
+  const lines = vision.split('\n')
+  const wanted = /^invariant (\d+)$/.exec(place)
+  if (wanted) {
+    const n = Number(wanted[1])
+    const at = lines.findIndex(line => Number(ITEM.exec(line)?.[1]) === n)
+    if (at >= 0) {
+      let end = at
+      for (;;) {
+        const next = lines[end + 1]
+        if (next === undefined || next.trim() === '' || ITEM.test(next)) break
+        end += 1
+      }
+
+      return {
+        text: [...lines.slice(0, end + 1), `   ${sentence}`, ...lines.slice(end + 1)].join(
+          '\n',
+        ),
+        target: n,
+        isNew: false,
+      }
+    }
+  }
+  const highest = lines.reduce((m, line) => {
+    const item = ITEM.exec(line)
+
+    return item ? Math.max(m, Number(item[1])) : m
+  }, 0)
+  const target = highest + 1
+
+  return {
+    text: `${vision.replace(/\s+$/, '')}\n\n${target}. ${sentence}\n`,
+    target,
+    isNew: true,
+  }
+}
+
+/** What one excerpt check gave: a reply, or why there is none. */
+export type ExcerptResult =
+  | { kind: 'reply'; reply: CheckReply }
+  | { kind: 'no result'; reason: string }
+
+/** True when the result is an alert on `invariant <target>`. */
+export function alertsOn(result: ExcerptResult, target: number): boolean {
+  return (
+    result.kind === 'reply' &&
+    result.reply.verdict === 'deviation' &&
+    result.reply.reference === `invariant ${target}`
+  )
+}
+
+/** The pending draft made from a learn reply. */
+export function draftOf(
+  reply: Extract<LearnReply, { result: 'draft' }>,
+  draftedAt: number,
+  model: string,
+  personCount: number,
+): CourseKeeperDraft {
+  const { result: _, ...fields } = reply
+
+  return { ...fields, draftedAt, model: clean(model, 100), personCount }
+}
+
+function readDraft(value: unknown): CourseKeeperDraft | undefined {
+  if (!isObject(value)) return undefined
+  const {
+    quote,
+    act,
+    forms,
+    variant,
+    place,
+    sentence,
+    allowed,
+    draftedAt,
+    model,
+    personCount,
+  } = value
+  const texts = [quote, act, forms, variant, place, sentence, allowed, model]
+  if (
+    !texts.every(text => typeof text === 'string') ||
+    typeof draftedAt !== 'number' ||
+    !Number.isFinite(draftedAt) ||
+    typeof personCount !== 'number' ||
+    !Number.isInteger(personCount) ||
+    personCount < 0
+  ) {
+    return undefined
+  }
+  const read = {
+    quote: clean(quote as string, LEARN_LIMITS.quote),
+    act: clean(act as string, LEARN_LIMITS.act),
+    forms: clean(forms as string, LEARN_LIMITS.forms),
+    variant: clean(variant as string, LEARN_LIMITS.variant),
+    place: canonicalPlace(clean(place as string, LEARN_LIMITS.place)),
+    sentence: clean(sentence as string, LEARN_LIMITS.sentence),
+    allowed: clean(allowed as string, LEARN_LIMITS.allowed),
+    draftedAt,
+    model: clean(model as string, 100),
+    personCount,
+  }
+  const { place: placed } = read
+  if (
+    placed === undefined ||
+    read.quote === '' ||
+    read.act === '' ||
+    !/^never\b/i.test(read.sentence)
+  ) {
+    return undefined
+  }
+
+  return { ...read, place: placed }
+}
+
+/** The record without its pending draft. */
+export function withoutDraft(record: CourseKeeperSession): CourseKeeperSession {
+  if (record.learn === undefined) return record
+  const { learn: _, ...rest } = record
+
+  return rest
+}
+
+export const GIVE_WORDS =
+  'To give the act in your words: /course-keeper learn <what the agent did wrong>'
+
+/** The answer to `/course-keeper learn` when the draft's quote was found. */
+export function draftText(draft: CourseKeeperDraft): string {
+  return [
+    'Course keeper read this as the act you corrected:',
+    `  ${draft.act}`,
+    `The agent's words: "${draft.quote}"`,
+    '',
+    'If this is the act: /course-keeper learn yes',
+    'If it is not: /course-keeper learn <what the agent did wrong, in your words>',
+    'To drop it: /course-keeper learn cancel',
+  ].join('\n')
+}
+
+/**
+ * The answer when the control check already alerts on the corrected turn, on
+ * the invariant that the draft's sentence would join. The alert can be about
+ * another matter of the same turn, so the person decides.
+ */
+export function coveredText(reply: Extract<CheckReply, { verdict: 'deviation' }>): string {
+  return (
+    'The check already alerts on the turn you corrected with today\'s vision ' +
+    `(${reply.reference}): ${reply.alert} Evidence: "${reply.evidence}". ` +
+    'If this alert is about the act you corrected, the vision already covers the act, ' +
+    'so no sentence is offered. If the alert is about another matter, run ' +
+    '/course-keeper learn <the act in words> again. The draft is dropped.'
+  )
+}
+
+/** What the tests on earlier turns found. */
+export type EarlierTest = {
+  /** How many earlier turns were tested. */
+  tested: number
+  /** The evidence of each new alert, newest turn first. */
+  newAlerts: string[]
+  /** Why each turn without a result has none. */
+  noResults: string[]
+}
+
+function verifyLine(verify: ExcerptResult, target: number): string {
+  if (verify.kind === 'no result') return `no result (${verify.reason}).`
+  if (alertsOn(verify, target)) return 'the check alerts with this sentence added.'
+  if (verify.reply.verdict === 'deviation') {
+    return (
+      `the check alerts on ${verify.reply.reference}, not on invariant ${target}, ` +
+      'with this sentence added. The sentence is not verified.'
+    )
+  }
+
+  return 'the check stays silent with this sentence added. The sentence is not verified.'
+}
+
+function earlierLine(earlier: EarlierTest): string {
+  const { tested, newAlerts, noResults } = earlier
+  if (tested === 0) {
+    return 'Test on earlier turns of this session: no earlier turn to test.'
+  }
+  const start = `Test on ${tested} earlier turn${tested === 1 ? '' : 's'} of this session: `
+  const missing =
+    noResults.length === 0
+      ? ''
+      : ` No result on ${noResults.length} of them (${noResults[0]}).`
+  if (newAlerts.length > 0) {
+    const count = newAlerts.length
+    const quoted = newAlerts.map(text => `"${text}"`).join('; ')
+
+    return (
+      `${start}${count} new alert${count === 1 ? '' : 's'}: ${quoted}. ` +
+      `Read ${count === 1 ? 'it' : 'them'}: such an alert can be sound.${missing}`
+    )
+  }
+  if (noResults.length === tested) return `${start}no result (${noResults[0]}).`
+
+  return `${start}no new alert.${missing}`
+}
+
+function placeText(target: number, isNew: boolean): string {
+  return isNew ? 'as a new invariant' : `invariant ${target}`
+}
+
+/** The lines that close a report: what the draft allows, its source, the notes. */
+function closingLines(draft: CourseKeeperDraft, version: string | undefined): string[] {
+  const lines = draft.allowed === '' ? [] : [`Must stay allowed: ${draft.allowed}`]
+  const date = new Date(draft.draftedAt).toISOString().slice(0, 10)
+  lines.push(
+    '',
+    `Where it comes from: the agent's words "${draft.quote}"; drafted ${date} UTC by ` +
+      `${draft.model || "the session's model"}` +
+      `${version === undefined ? '' : `; course keeper ${version}`}.`,
+    '',
+    'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+    '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
+    '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
+    '  too broad and 4 too narrow.',
+    '- Whether an agent that reads the sentence avoids the act is not measured.',
+  )
+
+  return lines
+}
+
+/** The answer to `/course-keeper learn yes` once the tests ran. */
+export function learnReport(input: {
+  draft: CourseKeeperDraft
+  target: number
+  isNew: boolean
+  control: ExcerptResult
+  verify: ExcerptResult
+  earlier: EarlierTest
+  version?: string
+}): string {
+  const { draft, target, isNew, control, verify, earlier, version } = input
+  const lines = [
+    `Draft sentence for VISION.md, ${placeText(target, isNew)}:`,
+    `  ${draft.sentence}`,
+    '',
+  ]
+  if (control.kind === 'no result') {
+    lines.push(
+      `Check with today's vision on the turn you corrected: no result (${control.reason}).`,
+    )
+  } else if (control.reply.verdict === 'deviation') {
+    // The control alerts, but not where the sentence goes: another matter.
+    lines.push(
+      `With today's vision the check alerts on this turn on ${control.reply.reference}, ` +
+        `another matter: "${control.reply.alert}".`,
+    )
+  }
+  lines.push(
+    `Test on the turn you corrected: ${verifyLine(verify, target)}`,
+    earlierLine(earlier),
+    ...closingLines(draft, version),
+  )
+
+  return lines.join('\n')
+}
+
+/**
+ * The answer when the corrected turn is too long for the test: the excerpt
+ * leaves out the middle of the turn, and the agent's words fall there.
+ */
+export function untestedReport(input: {
+  draft: CourseKeeperDraft
+  target: number
+  isNew: boolean
+  version?: string
+}): string {
+  const { draft, target, isNew, version } = input
+
+  return [
+    'The turn you corrected is too long for the test. The agent\'s words fall in the part ' +
+      'that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.',
+    '',
+    `Draft sentence for VISION.md, ${placeText(target, isNew)} (not tested):`,
+    `  ${draft.sentence}`,
+    ...closingLines(draft, version),
+  ].join('\n')
 }
