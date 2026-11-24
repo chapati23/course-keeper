@@ -82,6 +82,8 @@ Answer `y` to add the marketplace, then choose a scope. Update with `claude plug
 
 Course keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
 
+A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way.
+
 | Setting | Default | The file it names |
 | --- | --- | --- |
 | `visionFile` | `VISION.md` | The file that holds the vision. |
@@ -151,3 +153,7 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 - Checks for one session: `/course-keeper off`.
 - Everything for a project: remove or rename `VISION.md`.
 - Everything everywhere: `claude plugin disable course-keeper`, or `claude plugin uninstall course-keeper`.
+
+## Licence
+
+MIT. See `LICENSE`.

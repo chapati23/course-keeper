@@ -1,7 +1,12 @@
 {
   "name": "course-keeper",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Checks a coding session against the project's vision and the person's standing instructions, and alerts the person when it deviates.",
+  "author": { "name": "Course keeper authors" },
+  "license": "MIT",
+  "homepage": "https://github.com/chapati23/course-keeper",
+  "repository": "https://github.com/chapati23/course-keeper",
+  "keywords": ["vision", "invariants", "alerts", "drift", "review"],
   "engines": { "claude-code": ">=2.1.323" },
   "types": "./types/index.d.ts",
   "userConfig": {
