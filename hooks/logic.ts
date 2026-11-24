@@ -658,18 +658,50 @@ export function fileNames(options: { visionFile?: unknown; antiPatternsFile?: un
   }
 }
 
+const DIRECTIVE =
+  /<!--[ \t]*course-keeper:[ \t]*anti-patterns[ \t]*=[ \t]*([^\n]*?)[ \t]*-->/i
+
+/**
+ * The anti-patterns file that the vision names for its own project, in one
+ * HTML comment such as
+ * `<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->`.
+ * Only the first such comment counts. A value that `fileName` refuses
+ * counts as no directive: undefined.
+ */
+export function antiPatternsDirective(vision: string): string | undefined {
+  const value = DIRECTIVE.exec(vision)?.[1]
+  if (value === undefined) return undefined
+  const name = fileName(value, '')
+
+  return name === '' ? undefined : name
+}
+
+/**
+ * Where the anti-patterns file of a project comes from, when the vision
+ * names it: `read` when it was read, `missing` when it was not found or
+ * could not be read.
+ */
+export type NamedInVision = 'read' | 'missing'
+
 /** The text `/course-keeper` prints. */
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
   antiPatternsPath?: string,
   names: FileNames = DEFAULT_FILE_NAMES,
+  namedInVision?: NamedInVision,
 ): string {
+  const antiPatternsLine =
+    namedInVision === 'missing'
+      ? `${names.antiPatterns}: not found or not readable (named in ${names.vision}). The vision alone is used.`
+      : antiPatternsPath === undefined
+        ? undefined
+        : `${names.antiPatterns}: ${antiPatternsPath}${namedInVision === 'read' ? ` (named in ${names.vision})` : ''}`
   const lines = [
     visionPath === undefined
       ? `${names.vision}: not found. No checks run without it.`
       : `${names.vision}: ${visionPath}`,
-    ...(antiPatternsPath === undefined ? [] : [`${names.antiPatterns}: ${antiPatternsPath}`]),
+    ...(antiPatternsLine === undefined ? [] : [antiPatternsLine]),
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',

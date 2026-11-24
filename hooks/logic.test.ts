@@ -22,6 +22,7 @@ import {
   addWithdrawn,
   alertHeadline,
   alertSubject,
+  antiPatternsDirective,
   applyReply,
   catchText,
   clean,
@@ -1322,6 +1323,55 @@ describe('the anti-patterns file', () => {
     expect(statusText(emptyRecord(), undefined, undefined, names)).toMatch(
       /^docs\/course\.md: not found\. No checks run without it\.\n/,
     )
+  })
+
+  test('the status says when the vision names the anti-patterns file', () => {
+    const names = { vision: 'VISION.md', antiPatterns: 'docs/avoid.md' }
+    expect(statusText(emptyRecord(), '/r/VISION.md', '/r/docs/avoid.md', names, 'read')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: \/r\/docs\/avoid\.md \(named in VISION\.md\)\nChecks: on/,
+    )
+    expect(statusText(emptyRecord(), '/r/VISION.md', undefined, names, 'missing')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: not found or not readable \(named in VISION\.md\)\. The vision alone is used\.\nChecks: on/,
+    )
+  })
+})
+
+describe('the anti-patterns file named in the vision', () => {
+  test('one HTML comment names the file, with any spaces and any case', () => {
+    expect(
+      antiPatternsDirective('# V\n<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->\n'),
+    ).toBe('docs/vision/anti-patterns.md')
+    expect(antiPatternsDirective('<!--Course-Keeper:Anti-Patterns=avoid.md-->')).toBe('avoid.md')
+    expect(antiPatternsDirective('x <!--  course-keeper:\tanti-patterns =\t./docs//avoid.md  --> y')).toBe(
+      'docs/avoid.md',
+    )
+  })
+
+  test('only the first directive counts', () => {
+    const vision = '<!-- course-keeper: anti-patterns = a.md -->\n<!-- course-keeper: anti-patterns = b.md -->\n'
+    expect(antiPatternsDirective(vision)).toBe('a.md')
+    const bad = '<!-- course-keeper: anti-patterns = ../a.md -->\n<!-- course-keeper: anti-patterns = b.md -->\n'
+    expect(antiPatternsDirective(bad)).toBe(undefined)
+  })
+
+  test('no directive, another key, a split line or an unsafe value is no directive', () => {
+    for (const vision of [
+      '# Vision\n\n1. One service sets every price.\n',
+      'course-keeper: anti-patterns = avoid.md',
+      '<!-- course-keeper: vision = avoid.md -->',
+      '<!-- anti-patterns = avoid.md -->',
+      '<!-- course-keeper : anti-patterns = avoid.md -->',
+      '<!-- course-keeper: anti-patterns = -->',
+      '<!-- course-keeper: anti-patterns =\navoid.md -->',
+      '<!-- course-keeper: anti-patterns = ../avoid.md -->',
+      '<!-- course-keeper: anti-patterns = /etc/passwd -->',
+      '<!-- course-keeper: anti-patterns = ~/avoid.md -->',
+      '<!-- course-keeper: anti-patterns = docs\\avoid.md -->',
+      '<!-- course-keeper: anti-patterns = avoid\u0000.md -->',
+      `<!-- course-keeper: anti-patterns = ${'a'.repeat(201)} -->`,
+    ]) {
+      expect(antiPatternsDirective(vision)).toBe(undefined)
+    }
   })
 })
 

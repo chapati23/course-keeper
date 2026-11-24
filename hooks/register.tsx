@@ -20,6 +20,7 @@ import {
   alertSubject,
   alertsOn,
   answerCurrent,
+  antiPatternsDirective,
   applyReply,
   catchText,
   clean,
@@ -64,7 +65,7 @@ import {
   withOutcome,
   withoutDraft,
 } from './logic'
-import type { EarlierTest, ExcerptResult, Turn } from './logic'
+import type { EarlierTest, ExcerptResult, FileNames, NamedInVision, Turn } from './logic'
 
 type $ = EngineInterface
 
@@ -219,16 +220,23 @@ type Vision = {
   text: string
   /** ANTI-PATTERNS.md beside VISION.md, when it exists and can be read. */
   antiPatterns?: { path: string; text: string }
+  /** The names in force for this project: the texts shown to the person use them. */
+  names: FileNames
+  /** Set when the vision names the anti-patterns file itself. */
+  namedInVision?: NamedInVision
 }
 
 /**
  * VISION.md at the repository's main working tree; at the project root only
  * when the session is in no repository. When `repo()` fails, whether there
  * is a repository is unknown, and there is no vision. ANTI-PATTERNS.md in the
- * same directory is read too; without VISION.md it is not used. Both names
- * are the configured ones. A file whose real path (every link followed) is
- * not under the root's real path counts as not found, so its text never goes
- * to a model. When both names lead to the same file, it is the vision.
+ * same directory is read too; without VISION.md it is not used. The vision's
+ * name is the configured one. The anti-patterns name is the one the vision
+ * names in its directive, else the configured one; it is resolved at each
+ * read, so it never carries over to another project. A file whose real path
+ * (every link followed) is not under the root's real path counts as not
+ * found, so its text never goes to a model. When both names lead to the same
+ * file, it is the vision.
  */
 async function readVision($: $): Promise<Vision | undefined> {
   let repo: SessionRepo | null
@@ -250,14 +258,24 @@ async function readVision($: $): Promise<Vision | undefined> {
     // Missing or unreadable.
     return undefined
   }
-  const antiPatternsPath = `${dir}/${files.antiPatterns}`
+  const named = antiPatternsDirective(text)
+  const names = named === undefined ? files : { ...files, antiPatterns: named }
+  const alone: Vision = { path, text, names, ...(named === undefined ? {} : { namedInVision: 'missing' }) }
+  const antiPatternsPath = `${dir}/${names.antiPatterns}`
   const antiPatternsReal = await realFileUnder($, antiPatternsPath, root)
-  if (antiPatternsReal === undefined || antiPatternsReal === real) return { path, text }
+  if (antiPatternsReal === real) return { path, text, names }
+  if (antiPatternsReal === undefined) return alone
   try {
-    return { path, text, antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsReal) } }
+    return {
+      path,
+      text,
+      names,
+      antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsReal) },
+      ...(named === undefined ? {} : { namedInVision: 'read' }),
+    }
   } catch {
     // No anti-patterns file, or an unreadable one: the vision alone.
-    return { path, text }
+    return alone
   }
 }
 
@@ -486,7 +504,13 @@ async function runCommand($: $, args: string): Promise<string> {
       const vision = await readVision($)
       const { record: held } = await load($, id)
 
-      return statusText(held, vision?.path, vision?.antiPatterns?.path, files)
+      return statusText(
+        held,
+        vision?.path,
+        vision?.antiPatterns?.path,
+        vision?.names ?? files,
+        vision?.namedInVision,
+      )
     }
     case 'check':
       return `Check finished: ${await check($, 'command')}.`
@@ -738,7 +762,7 @@ async function testDraft(
         target: added.target,
         isNew: added.isNew,
         inAntiPatterns: added.inAntiPatterns,
-        names: files,
+        names: read.names,
         version,
       }),
     )
@@ -835,7 +859,7 @@ async function testDraft(
       earlier: tested,
       version,
       inAntiPatterns: added.inAntiPatterns,
-      names: files,
+      names: read.names,
     }),
   )
 }

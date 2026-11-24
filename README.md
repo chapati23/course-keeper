@@ -36,6 +36,12 @@ An optional `ANTI-PATTERNS.md` beside `VISION.md` holds the sentences that name 
 - Never call the mail client from the tool.
 ```
 
+The vision can name its own anti-patterns file in one line, an HTML comment. The path is relative to the place where course keeper looks for the vision (see [Settings](#settings)), not to the vision's own folder. The line overrides the `antiPatternsFile` setting for this project. The line stays in the text that the check reads. `/course-keeper` shows the file with "(named in VISION.md)", or says that the file was not found.
+
+```markdown
+<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->
+```
+
 ### Name the act to avoid
 
 Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident. The sentence can stand in the invariant or in the invariant's section of `ANTI-PATTERNS.md`. In the tests below, the sentence stood in the invariant; the tests did not measure the anti-patterns file.
@@ -82,7 +88,7 @@ Answer `y` to add the marketplace, then choose a scope. Update with `claude plug
 
 Course keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
 
-A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way.
+A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way. To choose the anti-patterns file for one project, put the line `<!-- course-keeper: anti-patterns = <path> -->` in its vision (see [The vision](#the-vision)). No such line exists for the vision file itself.
 
 | Setting | Default | The file it names |
 | --- | --- | --- |
