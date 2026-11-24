@@ -1,5 +1,7 @@
 # Course keeper
 
+<img src=".claude-plugin/icon.png" alt="The Course keeper icon: a ship's wheel with eight handles" width="96">
+
 Course keeper is a Claude Code plugin. At the end of each turn of the main agent, it checks the session against the project's vision and the person's standing instructions. When the session deviates from them, it shows an alert above the prompt.
 
 Course keeper reports to the person. It does not deny, change or stop the agent's work ([the decision and its reason](docs/adr/0001-alert-the-person-never-act-on-the-agent.md)).
