@@ -258,12 +258,16 @@ async function readVision($: $): Promise<Vision | undefined> {
     // Missing or unreadable.
     return undefined
   }
-  const named = antiPatternsDirective(text)
+  // A refused directive names no file: the configured name stays in force.
+  const directive = antiPatternsDirective(text)
+  const named = directive?.kind === 'named' ? directive.name : undefined
   const names = named === undefined ? files : { ...files, antiPatterns: named }
-  const alone: Vision = { path, text, names, ...(named === undefined ? {} : { namedInVision: 'missing' }) }
+  const from = (namedInVision: NamedInVision): Partial<Vision> =>
+    directive === undefined ? {} : { namedInVision: directive.kind === 'refused' ? 'refused' : namedInVision }
+  const alone: Vision = { path, text, names, ...from('missing') }
   const antiPatternsPath = `${dir}/${names.antiPatterns}`
   const antiPatternsReal = await realFileUnder($, antiPatternsPath, root)
-  if (antiPatternsReal === real) return { path, text, names }
+  if (antiPatternsReal === real) return { path, text, names, ...from('vision') }
   if (antiPatternsReal === undefined) return alone
   try {
     return {
@@ -271,7 +275,7 @@ async function readVision($: $): Promise<Vision | undefined> {
       text,
       names,
       antiPatterns: { path: antiPatternsPath, text: await $.fs.read(antiPatternsReal) },
-      ...(named === undefined ? {} : { namedInVision: 'read' }),
+      ...from('read'),
     }
   } catch {
     // No anti-patterns file, or an unreadable one: the vision alone.

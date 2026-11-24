@@ -7,6 +7,7 @@ import {
   ANTI_PATTERNS_NOTE,
   CHECK_STALE_MS,
   DEFAULT_ANTI_PATTERNS_FILE,
+  DEFAULT_FILE_NAMES,
   DEFAULT_VISION_FILE,
   LEARN_LIMITS,
   LIMITS,
@@ -1333,44 +1334,77 @@ describe('the anti-patterns file', () => {
     expect(statusText(emptyRecord(), '/r/VISION.md', undefined, names, 'missing')).toMatch(
       /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: not found or not readable \(named in VISION\.md\)\. The vision alone is used\.\nChecks: on/,
     )
+    expect(statusText(emptyRecord(), '/r/VISION.md', undefined, names, 'vision')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: the vision itself \(named in VISION\.md\)\. No separate file is used\.\nChecks: on/,
+    )
+    // A refused directive: one line says so, and the configured file stays in force.
+    expect(statusText(emptyRecord(), '/r/VISION.md', '/r/ANTI-PATTERNS.md', DEFAULT_FILE_NAMES, 'refused')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\n<!-- course-keeper: anti-patterns --> in VISION\.md is not used: it must name a Markdown file in the project, outside hidden folders\.\nANTI-PATTERNS\.md: \/r\/ANTI-PATTERNS\.md\nChecks: on/,
+    )
   })
 })
 
 describe('the anti-patterns file named in the vision', () => {
+  const named = (name: string) => ({ kind: 'named', name })
+  const REFUSED = { kind: 'refused' }
+
   test('one HTML comment names the file, with any spaces and any case', () => {
     expect(
       antiPatternsDirective('# V\n<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->\n'),
-    ).toBe('docs/vision/anti-patterns.md')
-    expect(antiPatternsDirective('<!--Course-Keeper:Anti-Patterns=avoid.md-->')).toBe('avoid.md')
-    expect(antiPatternsDirective('x <!--  course-keeper:\tanti-patterns =\t./docs//avoid.md  --> y')).toBe(
-      'docs/avoid.md',
+    ).toEqual(named('docs/vision/anti-patterns.md'))
+    expect(antiPatternsDirective('<!--Course-Keeper:Anti-Patterns=AVOID.MD-->')).toEqual(named('AVOID.MD'))
+    expect(antiPatternsDirective('x <!--  course-keeper:\tanti-patterns =\t./docs//avoid.markdown  --> y')).toEqual(
+      named('docs/avoid.markdown'),
     )
   })
 
   test('only the first directive counts', () => {
     const vision = '<!-- course-keeper: anti-patterns = a.md -->\n<!-- course-keeper: anti-patterns = b.md -->\n'
-    expect(antiPatternsDirective(vision)).toBe('a.md')
+    expect(antiPatternsDirective(vision)).toEqual(named('a.md'))
     const bad = '<!-- course-keeper: anti-patterns = ../a.md -->\n<!-- course-keeper: anti-patterns = b.md -->\n'
-    expect(antiPatternsDirective(bad)).toBe(undefined)
+    expect(antiPatternsDirective(bad)).toEqual(REFUSED)
   })
 
-  test('no directive, another key, a split line or an unsafe value is no directive', () => {
+  test('an example in a fenced block or a code span is not a directive', () => {
+    const example = '<!-- course-keeper: anti-patterns = example.md -->'
+    const real = '<!-- course-keeper: anti-patterns = docs/avoid.md -->'
+    expect(antiPatternsDirective(`\`\`\`markdown\n${example}\n\`\`\`\n${real}\n`)).toEqual(named('docs/avoid.md'))
+    expect(antiPatternsDirective(`~~~\n${example}\n~~~\n${real}\n`)).toEqual(named('docs/avoid.md'))
+    expect(antiPatternsDirective(`Write \`${example}\` in the vision.\n${real}\n`)).toEqual(named('docs/avoid.md'))
+    expect(antiPatternsDirective(`Write \`${example}\`, then ${real}\n`)).toEqual(named('docs/avoid.md'))
+    expect(antiPatternsDirective(`\`\`\`\n${example}\n\`\`\`\n`)).toBe(undefined)
+  })
+
+  test('no directive, another key or a split line is no directive', () => {
     for (const vision of [
       '# Vision\n\n1. One service sets every price.\n',
       'course-keeper: anti-patterns = avoid.md',
       '<!-- course-keeper: vision = avoid.md -->',
       '<!-- anti-patterns = avoid.md -->',
       '<!-- course-keeper : anti-patterns = avoid.md -->',
-      '<!-- course-keeper: anti-patterns = -->',
       '<!-- course-keeper: anti-patterns =\navoid.md -->',
-      '<!-- course-keeper: anti-patterns = ../avoid.md -->',
-      '<!-- course-keeper: anti-patterns = /etc/passwd -->',
-      '<!-- course-keeper: anti-patterns = ~/avoid.md -->',
-      '<!-- course-keeper: anti-patterns = docs\\avoid.md -->',
-      '<!-- course-keeper: anti-patterns = avoid\u0000.md -->',
-      `<!-- course-keeper: anti-patterns = ${'a'.repeat(201)} -->`,
     ]) {
       expect(antiPatternsDirective(vision)).toBe(undefined)
+    }
+  })
+
+  test('an unsafe path, a file that is not Markdown or a hidden folder is refused', () => {
+    for (const value of [
+      '',
+      '../avoid.md',
+      '/etc/passwd.md',
+      '~/avoid.md',
+      'docs\\avoid.md',
+      'avoid\u0000.md',
+      `${'a'.repeat(198)}.md`,
+      '.env',
+      'config/secrets.json',
+      'avoid.md.txt',
+      '.github/x.md',
+      'docs/.hidden/x.md',
+      '.avoid.md',
+    ]) {
+      expect(antiPatternsDirective(`<!-- course-keeper: anti-patterns = ${value} -->`)).toEqual(REFUSED)
     }
   })
 })

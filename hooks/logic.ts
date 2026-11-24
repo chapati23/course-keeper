@@ -658,30 +658,48 @@ export function fileNames(options: { visionFile?: unknown; antiPatternsFile?: un
   }
 }
 
-const DIRECTIVE =
-  /<!--[ \t]*course-keeper:[ \t]*anti-patterns[ \t]*=[ \t]*([^\n]*?)[ \t]*-->/i
+const DIRECTIVE = /<!--[ \t]*course-keeper:[ \t]*anti-patterns[ \t]*=[ \t]*(.*?)[ \t]*-->/gi
 
 /**
  * The anti-patterns file that the vision names for its own project, in one
  * HTML comment such as
  * `<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->`.
- * Only the first such comment counts. A value that `fileName` refuses
- * counts as no directive: undefined.
+ * Only the first such comment counts; one in a fenced code block or in a
+ * code span is an example, not a directive. The project's author chooses
+ * this path, not the person, so it must pass `fileName`, end in `.md` or
+ * `.markdown` and have no segment that starts with a dot. Otherwise the
+ * directive is `refused` and names no file. Undefined: no directive.
  */
-export function antiPatternsDirective(vision: string): string | undefined {
-  const value = DIRECTIVE.exec(vision)?.[1]
-  if (value === undefined) return undefined
-  const name = fileName(value, '')
+export function antiPatternsDirective(
+  vision: string,
+): { kind: 'named'; name: string } | { kind: 'refused' } | undefined {
+  const lines = vision.split('\n')
+  const fenced = fencedLines(lines)
+  for (const [i, line] of lines.entries()) {
+    if (fenced[i] === true) continue
+    for (const match of line.matchAll(DIRECTIVE)) {
+      // An odd number of backticks before the match: inside a code span.
+      if ((line.slice(0, match.index).match(/`/g)?.length ?? 0) % 2 === 1) continue
+      const name = fileName(match[1], '')
+      const isSafe =
+        name !== '' &&
+        /\.(md|markdown)$/i.test(name) &&
+        !name.split('/').some(segment => segment.startsWith('.'))
 
-  return name === '' ? undefined : name
+      return isSafe ? { kind: 'named', name } : { kind: 'refused' }
+    }
+  }
+
+  return undefined
 }
 
 /**
- * Where the anti-patterns file of a project comes from, when the vision
- * names it: `read` when it was read, `missing` when it was not found or
- * could not be read.
+ * Where the anti-patterns file of a project comes from, when the vision has
+ * a directive: `read` when the named file was read, `missing` when it was
+ * not found or could not be read, `vision` when it is the vision itself,
+ * `refused` when the directive names no file that may be read.
  */
-export type NamedInVision = 'read' | 'missing'
+export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'
 
 /** The text `/course-keeper` prints. */
 export function statusText(
@@ -691,17 +709,28 @@ export function statusText(
   names: FileNames = DEFAULT_FILE_NAMES,
   namedInVision?: NamedInVision,
 ): string {
-  const antiPatternsLine =
+  const named = ` (named in ${names.vision})`
+  const antiPatternsLines =
     namedInVision === 'missing'
-      ? `${names.antiPatterns}: not found or not readable (named in ${names.vision}). The vision alone is used.`
-      : antiPatternsPath === undefined
-        ? undefined
-        : `${names.antiPatterns}: ${antiPatternsPath}${namedInVision === 'read' ? ` (named in ${names.vision})` : ''}`
+      ? [`${names.antiPatterns}: not found or not readable${named}. The vision alone is used.`]
+      : namedInVision === 'vision'
+        ? [`${names.antiPatterns}: the vision itself${named}. No separate file is used.`]
+        : [
+            ...(namedInVision === 'refused'
+              ? [
+                  `<!-- course-keeper: anti-patterns --> in ${names.vision} is not used: ` +
+                    'it must name a Markdown file in the project, outside hidden folders.',
+                ]
+              : []),
+            ...(antiPatternsPath === undefined
+              ? []
+              : [`${names.antiPatterns}: ${antiPatternsPath}${namedInVision === 'read' ? named : ''}`]),
+          ]
   const lines = [
     visionPath === undefined
       ? `${names.vision}: not found. No checks run without it.`
       : `${names.vision}: ${visionPath}`,
-    ...(antiPatternsLine === undefined ? [] : [antiPatternsLine]),
+    ...antiPatternsLines,
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',
