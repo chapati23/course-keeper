@@ -82,6 +82,8 @@ Answer `y` to add the marketplace, then choose a scope. Update with `claude plug
 
 Course keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
 
+A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way.
+
 | Setting | Default | The file it names |
 | --- | --- | --- |
 | `visionFile` | `VISION.md` | The file that holds the vision. |
@@ -96,11 +98,12 @@ When a check finds a deviation, a row above the prompt shows it. For example, in
 ```
 ▲ Course keeper: this session breaks invariant 1 (One module computes every amount)
 - The session rounds the total in the exporter, which contradicts invariant 1.
+- Instead: call the one module for the total.
 - Evidence: "I will round the total in the exporter before it writes the file."
 1: Details · 2: Tell the agent · 3: False alarm · 4: Dismiss
 ```
 
-The first line names the invariant and its title, or quotes the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it. The next lines give one sentence about the deviation and the evidence, a quote from the agent. The row has four buttons:
+The first line names the invariant and its title, or quotes the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it. The next lines give one sentence about the deviation, what the invariant or the instruction asks for instead, and the evidence, a quote from the agent. The "Instead" line is left out when the check gave no such text. The row has four buttons:
 
 - `1 Details` shows or hides one more line: the note, the text that "Tell the agent" sends.
 - `2 Tell the agent` sends the note to the agent as a message from the plugin.
@@ -150,3 +153,7 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 - Checks for one session: `/course-keeper off`.
 - Everything for a project: remove or rename `VISION.md`.
 - Everything everywhere: `claude plugin disable course-keeper`, or `claude plugin uninstall course-keeper`.
+
+## Licence
+
+MIT. See `LICENSE`.

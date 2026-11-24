@@ -24,6 +24,12 @@ export type CourseKeeperAlert = {
   title?: string
   /** One sentence: what the session does, and what that contradicts. */
   alert: string
+  /**
+   * What the invariant or the instruction asks the agent to do instead, in
+   * a few words. Absent when the check gave none, and in a record written
+   * before this field existed.
+   */
+  instead?: string
   /** A short quote from the agent's text or action. */
   evidence: string
   /** The text for the agent, sent only when the person asks. */

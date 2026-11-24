@@ -102,6 +102,39 @@ describe('the check reply', () => {
     })
   })
 
+  test('a reply without instead is a deviation without the field', () => {
+    expect(parseCheckReply(DEVIATION)).not.toHaveProperty('instead')
+    expect(parseCheckReply(DEVIATION.replace('evidence:', 'instead:  \nevidence:'))).not.toHaveProperty(
+      'instead',
+    )
+  })
+
+  test('instead is read cleaned and cut to 160 characters', () => {
+    const reply = DEVIATION.replace('evidence:', 'instead: Keep the price in \x1b[31mthe service.\nevidence:')
+    expect(parseCheckReply(reply)).toMatchObject({ instead: 'Keep the price in the service.' })
+    const long = parseCheckReply(DEVIATION.replace('evidence:', `instead: ${'word '.repeat(60)}\nevidence:`))
+    const instead = long?.verdict === 'deviation' ? long.instead : undefined
+    expect(Array.from(instead ?? '').length).toBeLessThanOrEqual(LIMITS.instead)
+    expect(instead?.endsWith('…')).toBe(true)
+  })
+
+  test('an instead line is its own field, never a continuation of the alert', () => {
+    const reply = [
+      'verdict: deviation',
+      'reference: invariant 2',
+      'alert: The session adds a second pricing path,',
+      '  which contradicts invariant 2.',
+      'instead: Keep the price in the one service.',
+      'evidence: "I will add a fallback price table in the client."',
+      'note: Keep the price in that service.',
+    ].join('\n')
+
+    expect(parseCheckReply(reply)).toMatchObject({
+      alert: 'The session adds a second pricing path, which contradicts invariant 2.',
+      instead: 'Keep the price in the one service.',
+    })
+  })
+
   test('none is read', () => {
     expect(parseCheckReply('verdict: none')).toEqual({ verdict: 'none' })
   })
@@ -574,6 +607,31 @@ describe('stored records', () => {
       checkingSince: null,
     })
     expect(normalizeRecord({ v: 1, checkingSince: 7 }).checkingSince).toBe(7)
+  })
+
+  test("an alert's instead is read cleaned; an old, bad or empty one is dropped", () => {
+    const read = normalizeRecord({
+      v: 1,
+      current: { ...alertOf(), instead: 'Keep the price \x1b[31min one service.' },
+      alerts: [alertOf(), { ...alertOf(), instead: 7 }, { ...alertOf(), instead: ' ' }],
+    })
+
+    expect(read.current?.instead).toBe('Keep the price in one service.')
+    for (const alert of read.alerts) expect(alert).not.toHaveProperty('instead')
+  })
+
+  test('a new alert keeps the instead of the reply, and the status lists it', () => {
+    const reply = parseCheckReply(DEVIATION.replace('evidence:', 'instead: Keep the price in one service.\nevidence:'))
+    const done = applyReply(emptyRecord(), reply, 2000)
+
+    expect(done.shown?.instead).toBe('Keep the price in one service.')
+    expect(statusText(done.record, undefined)).toContain(
+      '  1. invariant 2: The session adds a second pricing path, which contradicts invariant 2. ' +
+        'Instead: Keep the price in one service. Answer: none yet.',
+    )
+    expect(statusText({ ...emptyRecord(), current: alertOf() }, undefined)).toContain(
+      '  1. invariant 2: The session adds a second pricing path. Answer: none yet.',
+    )
   })
 
   test("an alert's title is read cleaned and cut; a bad or empty one is dropped", () => {
