@@ -36,10 +36,11 @@ An optional `ANTI-PATTERNS.md` beside `VISION.md` holds the sentences that name 
 - Never call the mail client from the tool.
 ```
 
-The vision can name its own anti-patterns file in one line, an HTML comment. The path is relative to the place where course keeper looks for the vision (see [Settings](#settings)), not to the vision's own folder. The line overrides the `antiPatternsFile` setting for this project. The line can name only a Markdown file (`.md` or `.markdown`) outside hidden folders, and a symbolic link must lead to such a file too: the project chooses this path, not you, so course keeper sends only a file of that kind to the model. The comment must stand alone on its own line, outside a fenced code block; course keeper ignores it inside a sentence or a code span. The line stays in the text that the check reads. `/course-keeper` shows the file with "(named in VISION.md)", or says that the file was not found or that the line is not used.
+The vision can name its own anti-patterns file in one line, an HTML comment. Put the line first in the vision file, above the title; course keeper reads it only there. Empty lines before it do not count. The path is relative to the place where course keeper looks for the vision (see [Settings](#settings)), not to the vision's own folder. The line overrides the `antiPatternsFile` setting for this project. The line can name only a Markdown file (`.md` or `.markdown`) outside hidden folders, and a symbolic link must lead to such a file too: the project chooses this path, not you, so course keeper sends only a file of that kind to the model. The line stays in the text that the check reads. `/course-keeper` shows the file with "(named in VISION.md)", or says that the file was not found or that the line is not used.
 
 ```markdown
 <!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->
+# Vision
 ```
 
 ### Name the act to avoid
@@ -88,7 +89,7 @@ Answer `y` to add the marketplace, then choose a scope. Update with `claude plug
 
 Course keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
 
-A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way. To choose the anti-patterns file for one project, put the line `<!-- course-keeper: anti-patterns = <path> -->` in its vision (see [The vision](#the-vision)). No such line exists for the vision file itself.
+A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way. To choose the anti-patterns file for one project, put the line `<!-- course-keeper: anti-patterns = <path> -->` first in its vision (see [The vision](#the-vision)). No such line exists for the vision file itself.
 
 | Setting | Default | The file it names |
 | --- | --- | --- |

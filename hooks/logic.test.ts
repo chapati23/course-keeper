@@ -1350,49 +1350,56 @@ describe('the anti-patterns file named in the vision', () => {
   const named = (name: string) => ({ kind: 'named', name })
   const REFUSED = { kind: 'refused' }
 
-  test('one HTML comment names the file, with any spaces and any case', () => {
-    expect(
-      antiPatternsDirective('# V\n<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->\n'),
-    ).toEqual(named('docs/vision/anti-patterns.md'))
+  test('the comment on the first line that is not empty names the file, with any spaces and any case', () => {
+    expect(antiPatternsDirective('<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->\n# V\n')).toEqual(
+      named('docs/vision/anti-patterns.md'),
+    )
     expect(antiPatternsDirective('<!--Course-Keeper:Anti-Patterns=AVOID.MD-->')).toEqual(named('AVOID.MD'))
-    expect(antiPatternsDirective(' \t<!--  course-keeper:\tanti-patterns =\t./docs//avoid.markdown  -->\t \r\n')).toEqual(
-      named('docs/avoid.markdown'),
+    expect(
+      antiPatternsDirective('\n \t\n\r\n \t<!--  course-keeper:\tanti-patterns =\t./docs//avoid.markdown  -->\t \r\n# V\r\n'),
+    ).toEqual(named('docs/avoid.markdown'))
+    expect(antiPatternsDirective('﻿<!-- course-keeper: anti-patterns = avoid.md -->\n# V\n')).toEqual(
+      named('avoid.md'),
+    )
+    expect(antiPatternsDirective('﻿\n\n<!-- course-keeper: anti-patterns = avoid.md -->\n')).toEqual(
+      named('avoid.md'),
     )
   })
 
-  test('only the first directive counts', () => {
-    const vision = '<!-- course-keeper: anti-patterns = a.md -->\n<!-- course-keeper: anti-patterns = b.md -->\n'
-    expect(antiPatternsDirective(vision)).toEqual(named('a.md'))
-    const bad = '<!-- course-keeper: anti-patterns = ../a.md -->\n<!-- course-keeper: anti-patterns = b.md -->\n'
-    expect(antiPatternsDirective(bad)).toEqual(REFUSED)
-  })
-
-  test('only a comment alone on its line and outside a fenced block counts', () => {
-    const example = '<!-- course-keeper: anti-patterns = example.md -->'
+  test('the comment counts on no other line', () => {
     const real = '<!-- course-keeper: anti-patterns = docs/avoid.md -->'
-    for (const before of [
+    const example = '<!-- course-keeper: anti-patterns = example.md -->'
+    expect(antiPatternsDirective(`# V\n${real}\n`)).toBe(undefined)
+    expect(antiPatternsDirective(`\n# V\n\n${real}\n`)).toBe(undefined)
+    for (const later of [
       `\`\`\`markdown\n${example}\n\`\`\``,
       `~~~\n${example}\n~~~`,
       `Write \`${example}\` in the vision.`,
       `Write \`\`${example}\`\` in the vision.`,
-      `\`${example}\``,
-      `\`\`${example}\`\``,
+      `Write \`\`\n${example}\n\`\` in the vision.`,
       `Then ${example}`,
-      `${example} and more`,
+      example,
     ]) {
-      expect(antiPatternsDirective(`${before}\n${real}\n`)).toEqual(named('docs/avoid.md'))
-      expect(antiPatternsDirective(`${before}\n`)).toBe(undefined)
+      expect(antiPatternsDirective(`# V\n\n${later}\n`)).toBe(undefined)
+      expect(antiPatternsDirective(`${real}\n# V\n\n${later}\n`)).toEqual(named('docs/avoid.md'))
     }
+    // A refused first line stays refused; a later line does not replace it.
+    expect(antiPatternsDirective(`<!-- course-keeper: anti-patterns = ../a.md -->\n${real}\n`)).toEqual(REFUSED)
   })
 
   test('no directive, another key or a split line is no directive', () => {
     for (const vision of [
+      '',
+      ' \n\t\r\n',
       '# Vision\n\n1. One service sets every price.\n',
       'course-keeper: anti-patterns = avoid.md',
       '<!-- course-keeper: vision = avoid.md -->',
       '<!-- anti-patterns = avoid.md -->',
       '<!-- course-keeper : anti-patterns = avoid.md -->',
       '<!-- course-keeper: anti-patterns =\navoid.md -->',
+      '`<!-- course-keeper: anti-patterns = avoid.md -->`',
+      'See <!-- course-keeper: anti-patterns = avoid.md -->',
+      '<!-- course-keeper: anti-patterns = avoid.md --> # V',
     ]) {
       expect(antiPatternsDirective(vision)).toBe(undefined)
     }

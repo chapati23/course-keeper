@@ -688,28 +688,25 @@ export function isMarkdownOutsideHiddenUnder(real: string, root: string): boolea
 
 /**
  * The anti-patterns file that the vision names for its own project, in one
- * HTML comment that stands alone on its line, such as
+ * HTML comment on the first line of the vision that is not empty, such as
  * `<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->`.
- * Only the first such line counts. A comment inside a sentence, a code span
- * or a fenced code block is an example, not a directive. The name must pass
- * `fileName` and `isMarkdownOutsideHidden`; otherwise the directive is
- * `refused` and names no file. Undefined: no directive.
+ * That line must be the comment alone. The comment counts nowhere else, so
+ * an example further down never counts. The name must pass `fileName` and
+ * `isMarkdownOutsideHidden`; otherwise the directive is `refused` and names
+ * no file. Undefined: no directive.
  */
 export function antiPatternsDirective(
   vision: string,
 ): { kind: 'named'; name: string } | { kind: 'refused' } | undefined {
-  const lines = vision.split('\n')
-  const fenced = fencedLines(lines)
-  for (const [i, line] of lines.entries()) {
-    if (fenced[i] === true) continue
-    const value = DIRECTIVE.exec(line)?.[1]
-    if (value === undefined) continue
-    const name = fileName(value, '')
+  const first = vision
+    .replace(/^\uFEFF/, '')
+    .split('\n')
+    .find(line => !/^[ \t]*\r?$/.test(line))
+  const value = first === undefined ? undefined : DIRECTIVE.exec(first)?.[1]
+  if (value === undefined) return undefined
+  const name = fileName(value, '')
 
-    return name !== '' && isMarkdownOutsideHidden(name) ? { kind: 'named', name } : { kind: 'refused' }
-  }
-
-  return undefined
+  return name !== '' && isMarkdownOutsideHidden(name) ? { kind: 'named', name } : { kind: 'refused' }
 }
 
 /**
