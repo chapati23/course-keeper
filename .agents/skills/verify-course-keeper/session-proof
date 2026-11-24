@@ -44,8 +44,13 @@ def verify(repo, scratch, evidence):
 
     def wait_for(label, matches):
         deadline = time.monotonic() + 25
+        view = ""
         while time.monotonic() < deadline:
-            view = screen()
+            try:
+                view = screen()
+            except subprocess.CalledProcessError as error:
+                (evidence / (label + "-error.txt")).write_text(view + "\n" + error.stderr)
+                raise
             if matches(view):
                 (evidence / (label + ".txt")).write_text(view)
                 return
@@ -102,10 +107,12 @@ def verify(repo, scratch, evidence):
             if vision.read_text() != seed:
                 raise RuntimeError("Vision changed")
         finally:
-            if (scratch / "socket").exists():
-                tmux("kill-server", check=True)
-            server.shutdown()
-            (evidence / "model-posts.json").write_text(json.dumps(requests))
+            try:
+                if tmux("has-session").returncode == 0:
+                    tmux("kill-server", check=True)
+            finally:
+                server.shutdown()
+                (evidence / "model-posts.json").write_text(json.dumps(requests))
         if requests:
             raise RuntimeError("Unexpected POST to the model endpoint")
 
