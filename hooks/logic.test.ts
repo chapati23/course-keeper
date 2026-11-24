@@ -48,6 +48,8 @@ import {
   fencedLines,
   fileNames,
   isCheckRunning,
+  isMarkdownOutsideHidden,
+  isMarkdownOutsideHiddenUnder,
   isUnderRoot,
   isPersonMessage,
   isPersonOrigin,
@@ -1353,7 +1355,7 @@ describe('the anti-patterns file named in the vision', () => {
       antiPatternsDirective('# V\n<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->\n'),
     ).toEqual(named('docs/vision/anti-patterns.md'))
     expect(antiPatternsDirective('<!--Course-Keeper:Anti-Patterns=AVOID.MD-->')).toEqual(named('AVOID.MD'))
-    expect(antiPatternsDirective('x <!--  course-keeper:\tanti-patterns =\t./docs//avoid.markdown  --> y')).toEqual(
+    expect(antiPatternsDirective(' \t<!--  course-keeper:\tanti-patterns =\t./docs//avoid.markdown  -->\t \r\n')).toEqual(
       named('docs/avoid.markdown'),
     )
   })
@@ -1365,14 +1367,22 @@ describe('the anti-patterns file named in the vision', () => {
     expect(antiPatternsDirective(bad)).toEqual(REFUSED)
   })
 
-  test('an example in a fenced block or a code span is not a directive', () => {
+  test('only a comment alone on its line and outside a fenced block counts', () => {
     const example = '<!-- course-keeper: anti-patterns = example.md -->'
     const real = '<!-- course-keeper: anti-patterns = docs/avoid.md -->'
-    expect(antiPatternsDirective(`\`\`\`markdown\n${example}\n\`\`\`\n${real}\n`)).toEqual(named('docs/avoid.md'))
-    expect(antiPatternsDirective(`~~~\n${example}\n~~~\n${real}\n`)).toEqual(named('docs/avoid.md'))
-    expect(antiPatternsDirective(`Write \`${example}\` in the vision.\n${real}\n`)).toEqual(named('docs/avoid.md'))
-    expect(antiPatternsDirective(`Write \`${example}\`, then ${real}\n`)).toEqual(named('docs/avoid.md'))
-    expect(antiPatternsDirective(`\`\`\`\n${example}\n\`\`\`\n`)).toBe(undefined)
+    for (const before of [
+      `\`\`\`markdown\n${example}\n\`\`\``,
+      `~~~\n${example}\n~~~`,
+      `Write \`${example}\` in the vision.`,
+      `Write \`\`${example}\`\` in the vision.`,
+      `\`${example}\``,
+      `\`\`${example}\`\``,
+      `Then ${example}`,
+      `${example} and more`,
+    ]) {
+      expect(antiPatternsDirective(`${before}\n${real}\n`)).toEqual(named('docs/avoid.md'))
+      expect(antiPatternsDirective(`${before}\n`)).toBe(undefined)
+    }
   })
 
   test('no directive, another key or a split line is no directive', () => {
@@ -1406,6 +1416,28 @@ describe('the anti-patterns file named in the vision', () => {
     ]) {
       expect(antiPatternsDirective(`<!-- course-keeper: anti-patterns = ${value} -->`)).toEqual(REFUSED)
     }
+  })
+})
+
+describe('a file that a project may name', () => {
+  test('a Markdown file outside hidden folders may be read', () => {
+    for (const good of ['docs/vision/anti-patterns.md', 'AVOID.MD', 'docs/avoid.markdown']) {
+      expect(isMarkdownOutsideHidden(good)).toBe(true)
+    }
+    for (const bad of ['.env', 'config/secrets.json', '.github/x.md', 'docs/.hidden/x.md', '.avoid.md', 'avoid.md.txt']) {
+      expect(isMarkdownOutsideHidden(bad)).toBe(false)
+    }
+  })
+
+  test('the rule applies to the real path below the real root', () => {
+    expect(isMarkdownOutsideHiddenUnder('/r/docs/avoid.md', '/r')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('/r/docs/avoid.md', '/r/')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('/.r/docs/avoid.md', '/.r')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('C:\\r\\docs\\avoid.md', 'C:\\r')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('/r/.env', '/r')).toBe(false)
+    expect(isMarkdownOutsideHiddenUnder('/r/.private/secrets.md', '/r')).toBe(false)
+    expect(isMarkdownOutsideHiddenUnder('C:\\r\\.private\\secrets.md', 'C:\\r')).toBe(false)
+    expect(isMarkdownOutsideHiddenUnder('/elsewhere/avoid.md', '/r')).toBe(false)
   })
 })
 

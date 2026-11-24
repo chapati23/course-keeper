@@ -42,6 +42,7 @@ import {
   formatInstructions,
   invariantTitle,
   isCheckRunning,
+  isMarkdownOutsideHiddenUnder,
   isUnderRoot,
   isPersonOrigin,
   learnReport,
@@ -269,6 +270,8 @@ async function readVision($: $): Promise<Vision | undefined> {
   const antiPatternsReal = await realFileUnder($, antiPatternsPath, root)
   if (antiPatternsReal === real) return { path, text, names, ...from('vision') }
   if (antiPatternsReal === undefined) return alone
+  // The project chose this name: the file it leads to must pass the same rule.
+  if (named !== undefined && !isMarkdownOutsideHiddenUnder(antiPatternsReal, root)) return alone
   try {
     return {
       path,

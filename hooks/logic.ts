@@ -658,17 +658,42 @@ export function fileNames(options: { visionFile?: unknown; antiPatternsFile?: un
   }
 }
 
-const DIRECTIVE = /<!--[ \t]*course-keeper:[ \t]*anti-patterns[ \t]*=[ \t]*(.*?)[ \t]*-->/gi
+const DIRECTIVE =
+  /^[ \t]*<!--[ \t]*course-keeper:[ \t]*anti-patterns[ \t]*=[ \t]*(.*?)[ \t]*-->[ \t]*\r?$/i
+
+/**
+ * True when a relative path that a project chooses may be read for it: it
+ * ends in `.md` or `.markdown` and no segment starts with a dot. The project's
+ * author chooses such a path, not the person, so no other kind of file goes
+ * to the model.
+ */
+export function isMarkdownOutsideHidden(relative: string): boolean {
+  return (
+    /\.(md|markdown)$/i.test(relative) &&
+    !relative.split(/[\\/]/).some(segment => segment.startsWith('.'))
+  )
+}
+
+/**
+ * True when the real path `real` lies under the real root `root` and its
+ * part below the root passes `isMarkdownOutsideHidden`. A link can lead a
+ * safe name to an unsafe file; this checks the file itself.
+ */
+export function isMarkdownOutsideHiddenUnder(real: string, root: string): boolean {
+  if (!isUnderRoot(real, root)) return false
+  const base = root.replace(root.startsWith('/') ? /\/+$/ : /[\\/]+$/, '')
+
+  return isMarkdownOutsideHidden(real.slice(base.length + 1))
+}
 
 /**
  * The anti-patterns file that the vision names for its own project, in one
- * HTML comment such as
+ * HTML comment that stands alone on its line, such as
  * `<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->`.
- * Only the first such comment counts; one in a fenced code block or in a
- * code span is an example, not a directive. The project's author chooses
- * this path, not the person, so it must pass `fileName`, end in `.md` or
- * `.markdown` and have no segment that starts with a dot. Otherwise the
- * directive is `refused` and names no file. Undefined: no directive.
+ * Only the first such line counts. A comment inside a sentence, a code span
+ * or a fenced code block is an example, not a directive. The name must pass
+ * `fileName` and `isMarkdownOutsideHidden`; otherwise the directive is
+ * `refused` and names no file. Undefined: no directive.
  */
 export function antiPatternsDirective(
   vision: string,
@@ -677,17 +702,11 @@ export function antiPatternsDirective(
   const fenced = fencedLines(lines)
   for (const [i, line] of lines.entries()) {
     if (fenced[i] === true) continue
-    for (const match of line.matchAll(DIRECTIVE)) {
-      // An odd number of backticks before the match: inside a code span.
-      if ((line.slice(0, match.index).match(/`/g)?.length ?? 0) % 2 === 1) continue
-      const name = fileName(match[1], '')
-      const isSafe =
-        name !== '' &&
-        /\.(md|markdown)$/i.test(name) &&
-        !name.split('/').some(segment => segment.startsWith('.'))
+    const value = DIRECTIVE.exec(line)?.[1]
+    if (value === undefined) continue
+    const name = fileName(value, '')
 
-      return isSafe ? { kind: 'named', name } : { kind: 'refused' }
-    }
+    return name !== '' && isMarkdownOutsideHidden(name) ? { kind: 'named', name } : { kind: 'refused' }
   }
 
   return undefined
@@ -696,7 +715,8 @@ export function antiPatternsDirective(
 /**
  * Where the anti-patterns file of a project comes from, when the vision has
  * a directive: `read` when the named file was read, `missing` when it was
- * not found or could not be read, `vision` when it is the vision itself,
+ * not found, could not be read, or leads through a link to a file that
+ * `isMarkdownOutsideHidden` refuses, `vision` when it is the vision itself,
  * `refused` when the directive names no file that may be read.
  */
 export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'

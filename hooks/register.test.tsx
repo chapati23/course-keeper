@@ -1525,6 +1525,32 @@ test('a directive whose file a link leads outside the project is not read', asyn
   expect(forks[0]).not.toContain('# Secret')
 })
 
+test('a directive whose file a link leads to a file other than Markdown or a hidden folder is not read', async ($, on) => {
+  const { forks, files, links } = world(on, () => 'verdict: none')
+  files['/work/repo/VISION.md'] = NAMED
+  files['/work/repo/.env'] = 'TOKEN=secret\n'
+  files['/work/repo/.private/secrets.md'] = '# Private secret\n'
+  const missing =
+    'docs/vision/avoid.md: not found or not readable (named in VISION.md). The vision alone is used.\nChecks:'
+
+  links['/work/repo/docs/vision/avoid.md'] = '/work/repo/.env'
+  expect(await status($)).toContain(missing)
+  await command($, 'check')
+  expect(forks[0]).not.toContain('secret')
+  expect(forks[0]).not.toContain('# Anti-patterns:')
+
+  links['/work/repo/docs/vision/avoid.md'] = '/work/repo/.private/secrets.md'
+  expect(await status($)).toContain(missing)
+  await command($, 'check')
+  expect(forks[1]).not.toContain('Private secret')
+  expect(forks[1]).not.toContain('# Anti-patterns:')
+
+  // A link to a Markdown file outside hidden folders is followed.
+  files['/work/repo/notes/avoid.md'] = ANTI_PATTERNS
+  links['/work/repo/docs/vision/avoid.md'] = '/work/repo/notes/avoid.md'
+  expect(await status($)).toContain('docs/vision/avoid.md: /work/repo/docs/vision/avoid.md (named in VISION.md)')
+})
+
 test('a project root whose real path cannot be told has no vision', async ($, on) => {
   const { links } = world(on, () => 'verdict: none')
   links['/work/repo'] = '/gone'
