@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Drive the session switch in a fresh Claude Code terminal."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+def verify(repo, scratch, evidence):
+    project = scratch / "project"
+    profile = scratch / "profile"
+    home = scratch / "home"
+    for directory in (project, profile, home):
+        directory.mkdir()
+    vision = project / "VISION.md"
+    seed = "# Vision\n\n1. Always write plain text.\n"
+    vision.write_text(seed)
+    (profile / ".claude.json").write_text(json.dumps({
+        "hasCompletedOnboarding": True, "theme": "dark",
+        "customApiKeyResponses": {"approved": ["verification-only"]},
+    }))
+    requests = []
+
+    class RejectModel(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(self.path.split("?")[0])
+            self.send_error(503)
+
+        def log_message(self, *args):
+            pass
+
+    def tmux(*args, **kwargs):
+        return subprocess.run(["tmux", "-S", str(scratch / "socket"), *args],
+                              text=True, capture_output=True, **kwargs)
+
+    def screen():
+        return tmux("capture-pane", "-p", "-S", "-200", check=True).stdout
+
+    def wait_for(label, matches):
+        deadline = time.monotonic() + 25
+        view = ""
+        while time.monotonic() < deadline:
+            try:
+                view = screen()
+            except subprocess.CalledProcessError as error:
+                (evidence / (label + "-error.txt")).write_text(view + "\n" + error.stderr)
+                raise
+            if matches(view):
+                (evidence / (label + ".txt")).write_text(view)
+                return
+            time.sleep(0.12)
+        (evidence / (label + "-timeout.txt")).write_text(view)
+        raise RuntimeError("Timed out waiting for " + label)
+
+    def command(label, arg, result):
+        text = ("/course-keeper " + arg).rstrip()
+        tmux("send-keys", "-l", text, check=True)
+        time.sleep(0.3)
+        tmux("send-keys", "Enter", check=True)
+        def answered(view):
+            latest = view.rsplit("❯ /", 1)[-1]
+            return latest.startswith(text[1:] + "\n") and result in latest
+
+        wait_for(label, answered)
+
+    claude = os.environ.get("CLAUDE_BIN") or shutil.which("claude")
+    if not claude:
+        raise RuntimeError("Claude Code is required")
+    with HTTPServer(("127.0.0.1", 0), RejectModel) as server:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            tmux("-f", "/dev/null", "new-session", "-d", "-x", "150", "-y", "42",
+                 "-c", str(project), "env", "-i", "PATH=" + os.environ["PATH"],
+                 "TERM=xterm-256color", f"HOME={home}", f"CLAUDE_CONFIG_DIR={profile}",
+                 "ANTHROPIC_API_KEY=verification-only", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+                 f"ANTHROPIC_BASE_URL=http://127.0.0.1:{server.server_port}", claude,
+                 "--plugin-dir", str(repo), "--setting-sources", "", "--strict-mcp-config",
+                 "--tools", "", check=True)
+            wait_for("trust", lambda view: str(project) in view and
+                     "❯ No, exit" in view and "Yes, I trust this folder" in view)
+            time.sleep(0.8)
+            tmux("send-keys", "Down", check=True)
+            wait_for("trust-selected", lambda view: "❯ Yes, I trust this folder" in view)
+            tmux("send-keys", "Enter", check=True)
+            wait_for("launch", lambda view: "Claude Code v" in view and "❯" in view
+                     and "Yes, I trust this folder" not in view)
+            command("doctor", "", str(vision))
+            if "Checks: on for this session." not in (evidence / "doctor.txt").read_text():
+                raise RuntimeError("Expected a fresh session with checks on")
+            for state in ("off", "on"):
+                command(state, state, f"Course keeper checks are {state} for this session.")
+                command("status-" + state, "", f"Checks: {state} for this session.")
+                stores = list((profile / "plugins/store").glob("course-keeper*.json"))
+                if len(stores) != 1:
+                    raise RuntimeError("Expected one Course keeper store")
+                data = stores[0].read_text()
+                (evidence / ("store-" + state + ".json")).write_text(data)
+                records = list(json.loads(data).values())
+                if len(records) != 1 or records[0]["record"]["isOff"] is not (state == "off"):
+                    raise RuntimeError("Unexpected stored switch value")
+            if vision.read_text() != seed:
+                raise RuntimeError("Vision changed")
+        finally:
+            try:
+                if tmux("has-session").returncode == 0:
+                    tmux("kill-server", check=True)
+            finally:
+                server.shutdown()
+                (evidence / "model-posts.json").write_text(json.dumps(requests))
+        if requests:
+            raise RuntimeError("Unexpected POST to the model endpoint")
+
+
+if __name__ == "__main__":
+    repo = Path(__file__).resolve().parents[3]
+    if not (repo / ".claude-plugin/plugin.json").is_file():
+        sys.exit("Run the helper installed under this checkout's .agents/skills directory.")
+    evidence = Path(tempfile.mkdtemp(prefix="course-keeper-proof-")).resolve()
+    print(evidence, flush=True)
+    with tempfile.TemporaryDirectory(prefix="ck-") as directory:
+        verify(repo, Path(directory).resolve(), evidence)
+    print("PASS", evidence)
