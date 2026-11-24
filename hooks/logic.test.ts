@@ -7,6 +7,7 @@ import {
   ANTI_PATTERNS_NOTE,
   CHECK_STALE_MS,
   DEFAULT_ANTI_PATTERNS_FILE,
+  DEFAULT_FILE_NAMES,
   DEFAULT_VISION_FILE,
   LEARN_LIMITS,
   LIMITS,
@@ -22,6 +23,7 @@ import {
   addWithdrawn,
   alertHeadline,
   alertSubject,
+  antiPatternsDirective,
   applyReply,
   catchText,
   clean,
@@ -46,6 +48,8 @@ import {
   fencedLines,
   fileNames,
   isCheckRunning,
+  isMarkdownOutsideHidden,
+  isMarkdownOutsideHiddenUnder,
   isUnderRoot,
   isPersonMessage,
   isPersonOrigin,
@@ -1322,6 +1326,125 @@ describe('the anti-patterns file', () => {
     expect(statusText(emptyRecord(), undefined, undefined, names)).toMatch(
       /^docs\/course\.md: not found\. No checks run without it\.\n/,
     )
+  })
+
+  test('the status says when the vision names the anti-patterns file', () => {
+    const names = { vision: 'VISION.md', antiPatterns: 'docs/avoid.md' }
+    expect(statusText(emptyRecord(), '/r/VISION.md', '/r/docs/avoid.md', names, 'read')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: \/r\/docs\/avoid\.md \(named in VISION\.md\)\nChecks: on/,
+    )
+    expect(statusText(emptyRecord(), '/r/VISION.md', undefined, names, 'missing')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: not found or not readable \(named in VISION\.md\)\. The vision alone is used\.\nChecks: on/,
+    )
+    expect(statusText(emptyRecord(), '/r/VISION.md', undefined, names, 'vision')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\ndocs\/avoid\.md: the vision itself \(named in VISION\.md\)\. No separate file is used\.\nChecks: on/,
+    )
+    // A refused directive: one line says so, and the configured file stays in force.
+    expect(statusText(emptyRecord(), '/r/VISION.md', '/r/ANTI-PATTERNS.md', DEFAULT_FILE_NAMES, 'refused')).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\n<!-- course-keeper: anti-patterns --> in VISION\.md is not used: it must name a Markdown file in the project, outside hidden folders\.\nANTI-PATTERNS\.md: \/r\/ANTI-PATTERNS\.md\nChecks: on/,
+    )
+  })
+})
+
+describe('the anti-patterns file named in the vision', () => {
+  const named = (name: string) => ({ kind: 'named', name })
+  const REFUSED = { kind: 'refused' }
+
+  test('the comment on the first line that is not empty names the file, with any spaces and any case', () => {
+    expect(antiPatternsDirective('<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->\n# V\n')).toEqual(
+      named('docs/vision/anti-patterns.md'),
+    )
+    expect(antiPatternsDirective('<!--Course-Keeper:Anti-Patterns=AVOID.MD-->')).toEqual(named('AVOID.MD'))
+    expect(
+      antiPatternsDirective('\n \t\n\r\n \t<!--  course-keeper:\tanti-patterns =\t./docs//avoid.markdown  -->\t \r\n# V\r\n'),
+    ).toEqual(named('docs/avoid.markdown'))
+    expect(antiPatternsDirective('﻿<!-- course-keeper: anti-patterns = avoid.md -->\n# V\n')).toEqual(
+      named('avoid.md'),
+    )
+    expect(antiPatternsDirective('﻿\n\n<!-- course-keeper: anti-patterns = avoid.md -->\n')).toEqual(
+      named('avoid.md'),
+    )
+  })
+
+  test('the comment counts on no other line', () => {
+    const real = '<!-- course-keeper: anti-patterns = docs/avoid.md -->'
+    const example = '<!-- course-keeper: anti-patterns = example.md -->'
+    expect(antiPatternsDirective(`# V\n${real}\n`)).toBe(undefined)
+    expect(antiPatternsDirective(`\n# V\n\n${real}\n`)).toBe(undefined)
+    for (const later of [
+      `\`\`\`markdown\n${example}\n\`\`\``,
+      `~~~\n${example}\n~~~`,
+      `Write \`${example}\` in the vision.`,
+      `Write \`\`${example}\`\` in the vision.`,
+      `Write \`\`\n${example}\n\`\` in the vision.`,
+      `Then ${example}`,
+      example,
+    ]) {
+      expect(antiPatternsDirective(`# V\n\n${later}\n`)).toBe(undefined)
+      expect(antiPatternsDirective(`${real}\n# V\n\n${later}\n`)).toEqual(named('docs/avoid.md'))
+    }
+    // A refused first line stays refused; a later line does not replace it.
+    expect(antiPatternsDirective(`<!-- course-keeper: anti-patterns = ../a.md -->\n${real}\n`)).toEqual(REFUSED)
+  })
+
+  test('no directive, another key or a split line is no directive', () => {
+    for (const vision of [
+      '',
+      ' \n\t\r\n',
+      '# Vision\n\n1. One service sets every price.\n',
+      'course-keeper: anti-patterns = avoid.md',
+      '<!-- course-keeper: vision = avoid.md -->',
+      '<!-- anti-patterns = avoid.md -->',
+      '<!-- course-keeper : anti-patterns = avoid.md -->',
+      '<!-- course-keeper: anti-patterns =\navoid.md -->',
+      '`<!-- course-keeper: anti-patterns = avoid.md -->`',
+      'See <!-- course-keeper: anti-patterns = avoid.md -->',
+      '<!-- course-keeper: anti-patterns = avoid.md --> # V',
+    ]) {
+      expect(antiPatternsDirective(vision)).toBe(undefined)
+    }
+  })
+
+  test('an unsafe path, a file that is not Markdown or a hidden folder is refused', () => {
+    for (const value of [
+      '',
+      '../avoid.md',
+      '/etc/passwd.md',
+      '~/avoid.md',
+      'docs\\avoid.md',
+      'avoid\u0000.md',
+      `${'a'.repeat(198)}.md`,
+      '.env',
+      'config/secrets.json',
+      'avoid.md.txt',
+      '.github/x.md',
+      'docs/.hidden/x.md',
+      '.avoid.md',
+    ]) {
+      expect(antiPatternsDirective(`<!-- course-keeper: anti-patterns = ${value} -->`)).toEqual(REFUSED)
+    }
+  })
+})
+
+describe('a file that a project may name', () => {
+  test('a Markdown file outside hidden folders may be read', () => {
+    for (const good of ['docs/vision/anti-patterns.md', 'AVOID.MD', 'docs/avoid.markdown']) {
+      expect(isMarkdownOutsideHidden(good)).toBe(true)
+    }
+    for (const bad of ['.env', 'config/secrets.json', '.github/x.md', 'docs/.hidden/x.md', '.avoid.md', 'avoid.md.txt']) {
+      expect(isMarkdownOutsideHidden(bad)).toBe(false)
+    }
+  })
+
+  test('the rule applies to the real path below the real root', () => {
+    expect(isMarkdownOutsideHiddenUnder('/r/docs/avoid.md', '/r')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('/r/docs/avoid.md', '/r/')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('/.r/docs/avoid.md', '/.r')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('C:\\r\\docs\\avoid.md', 'C:\\r')).toBe(true)
+    expect(isMarkdownOutsideHiddenUnder('/r/.env', '/r')).toBe(false)
+    expect(isMarkdownOutsideHiddenUnder('/r/.private/secrets.md', '/r')).toBe(false)
+    expect(isMarkdownOutsideHiddenUnder('C:\\r\\.private\\secrets.md', 'C:\\r')).toBe(false)
+    expect(isMarkdownOutsideHiddenUnder('/elsewhere/avoid.md', '/r')).toBe(false)
   })
 })
 

@@ -658,18 +658,96 @@ export function fileNames(options: { visionFile?: unknown; antiPatternsFile?: un
   }
 }
 
+const DIRECTIVE =
+  /^[ \t]*<!--[ \t]*course-keeper:[ \t]*anti-patterns[ \t]*=[ \t]*(.*?)[ \t]*-->[ \t]*\r?$/i
+
+/**
+ * True when a relative path that a project chooses may be read for it: it
+ * ends in `.md` or `.markdown` and no segment starts with a dot. The project's
+ * author chooses such a path, not the person, so no other kind of file goes
+ * to the model.
+ */
+export function isMarkdownOutsideHidden(relative: string): boolean {
+  return (
+    /\.(md|markdown)$/i.test(relative) &&
+    !relative.split(/[\\/]/).some(segment => segment.startsWith('.'))
+  )
+}
+
+/**
+ * True when the real path `real` lies under the real root `root` and its
+ * part below the root passes `isMarkdownOutsideHidden`. A link can lead a
+ * safe name to an unsafe file; this checks the file itself.
+ */
+export function isMarkdownOutsideHiddenUnder(real: string, root: string): boolean {
+  if (!isUnderRoot(real, root)) return false
+  const base = root.replace(root.startsWith('/') ? /\/+$/ : /[\\/]+$/, '')
+
+  return isMarkdownOutsideHidden(real.slice(base.length + 1))
+}
+
+/**
+ * The anti-patterns file that the vision names for its own project, in one
+ * HTML comment on the first line of the vision that is not empty, such as
+ * `<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->`.
+ * That line must be the comment alone. The comment counts nowhere else, so
+ * an example further down never counts. The name must pass `fileName` and
+ * `isMarkdownOutsideHidden`; otherwise the directive is `refused` and names
+ * no file. Undefined: no directive.
+ */
+export function antiPatternsDirective(
+  vision: string,
+): { kind: 'named'; name: string } | { kind: 'refused' } | undefined {
+  const first = vision
+    .replace(/^\uFEFF/, '')
+    .split('\n')
+    .find(line => !/^[ \t]*\r?$/.test(line))
+  const value = first === undefined ? undefined : DIRECTIVE.exec(first)?.[1]
+  if (value === undefined) return undefined
+  const name = fileName(value, '')
+
+  return name !== '' && isMarkdownOutsideHidden(name) ? { kind: 'named', name } : { kind: 'refused' }
+}
+
+/**
+ * Where the anti-patterns file of a project comes from, when the vision has
+ * a directive: `read` when the named file was read, `missing` when it was
+ * not found, could not be read, or leads through a link to a file that
+ * `isMarkdownOutsideHidden` refuses, `vision` when it is the vision itself,
+ * `refused` when the directive names no file that may be read.
+ */
+export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'
+
 /** The text `/course-keeper` prints. */
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
   antiPatternsPath?: string,
   names: FileNames = DEFAULT_FILE_NAMES,
+  namedInVision?: NamedInVision,
 ): string {
+  const named = ` (named in ${names.vision})`
+  const antiPatternsLines =
+    namedInVision === 'missing'
+      ? [`${names.antiPatterns}: not found or not readable${named}. The vision alone is used.`]
+      : namedInVision === 'vision'
+        ? [`${names.antiPatterns}: the vision itself${named}. No separate file is used.`]
+        : [
+            ...(namedInVision === 'refused'
+              ? [
+                  `<!-- course-keeper: anti-patterns --> in ${names.vision} is not used: ` +
+                    'it must name a Markdown file in the project, outside hidden folders.',
+                ]
+              : []),
+            ...(antiPatternsPath === undefined
+              ? []
+              : [`${names.antiPatterns}: ${antiPatternsPath}${namedInVision === 'read' ? named : ''}`]),
+          ]
   const lines = [
     visionPath === undefined
       ? `${names.vision}: not found. No checks run without it.`
       : `${names.vision}: ${visionPath}`,
-    ...(antiPatternsPath === undefined ? [] : [`${names.antiPatterns}: ${antiPatternsPath}`]),
+    ...antiPatternsLines,
     `Checks: ${record.isOff ? 'off' : 'on'} for this session.`,
     '',
     'Standing instructions:',

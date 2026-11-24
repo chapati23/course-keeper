@@ -1418,6 +1418,139 @@ test(
   },
 )
 
+const NAMED = `<!-- course-keeper: anti-patterns = docs/vision/avoid.md -->\n${VISION}`
+
+test(
+  'the anti-patterns file that the vision names wins over the setting, and the texts name it',
+  { options: { antiPatternsFile: 'docs/setting.md' } },
+  async ($, on) => {
+    const { forks, files } = world(on, prompt => (prompt.includes('Catch:') ? DRAFT : 'verdict: none'), 'none', {
+      messages: () => ROWS,
+    })
+    files['/work/repo/VISION.md'] = NAMED
+    files['/work/repo/docs/setting.md'] = '# Not read\n'
+    files['/work/repo/ANTI-PATTERNS.md'] = '# Not read either\n'
+    files['/work/repo/docs/vision/avoid.md'] = ANTI_PATTERNS
+
+    expect(await status($)).toContain(
+      'VISION.md: /work/repo/VISION.md\n' +
+        'docs/vision/avoid.md: /work/repo/docs/vision/avoid.md (named in VISION.md)\nChecks:',
+    )
+    await command($, 'check')
+    // The directive stays in the vision text that the model gets.
+    expect(forks[0]).toContain(`Vision:\n${NAMED}\n# Anti-patterns:`)
+    expect(forks[0]).toContain(ANTI_PATTERNS)
+    expect(forks[0]).not.toContain('# Not read')
+
+    await command($, 'learn')
+    expect(await command($, 'learn yes')).toContain(
+      'This is a draft for the owners of docs/vision/avoid.md and VISION.md.',
+    )
+
+    // A missing file: the status says so, and the vision alone is used.
+    delete files['/work/repo/docs/vision/avoid.md']
+    expect(await status($)).toContain(
+      'VISION.md: /work/repo/VISION.md\n' +
+        'docs/vision/avoid.md: not found or not readable (named in VISION.md). The vision alone is used.\nChecks:',
+    )
+    await command($, 'check')
+    expect(forks.at(-1)).not.toContain('# Anti-patterns:')
+
+    // Without the directive, the setting is in force again at the next read.
+    files['/work/repo/VISION.md'] = VISION
+    files['/work/repo/docs/setting.md'] = ANTI_PATTERNS
+    expect(await status($)).toContain('docs/setting.md: /work/repo/docs/setting.md\nChecks:')
+  },
+)
+
+const REFUSED_LINE =
+  '<!-- course-keeper: anti-patterns --> in VISION.md is not used: ' +
+  'it must name a Markdown file in the project, outside hidden folders.'
+
+test('a directive with an invalid name counts as absent, and the status says so', async ($, on) => {
+  const { files } = world(on, () => 'verdict: none')
+  files['/work/repo/VISION.md'] = `<!-- course-keeper: anti-patterns = ../avoid.md -->\n${VISION}`
+  files['/work/repo/ANTI-PATTERNS.md'] = ANTI_PATTERNS
+
+  const shown = await status($)
+  expect(shown).toContain(
+    `VISION.md: /work/repo/VISION.md\n${REFUSED_LINE}\nANTI-PATTERNS.md: /work/repo/ANTI-PATTERNS.md\nChecks:`,
+  )
+  expect(shown).not.toContain('named in')
+})
+
+test('a directive that names a file other than Markdown, or one in a hidden folder, is not read', async ($, on) => {
+  const { forks, files } = world(on, () => 'verdict: none')
+  files['/work/repo/.env'] = 'TOKEN=secret\n'
+  files['/work/repo/.github/x.md'] = '# Hidden\n'
+  files['/work/repo/VISION.md'] = `<!-- course-keeper: anti-patterns = .env -->\n${VISION}`
+
+  expect(await status($)).toContain(`VISION.md: /work/repo/VISION.md\n${REFUSED_LINE}\nChecks:`)
+  await command($, 'check')
+  expect(forks[0]).not.toContain('secret')
+
+  files['/work/repo/VISION.md'] = `<!-- course-keeper: anti-patterns = .github/x.md -->\n${VISION}`
+  expect(await status($)).toContain(REFUSED_LINE)
+  await command($, 'check')
+  expect(forks[1]).not.toContain('# Hidden')
+})
+
+test('a directive that names the vision itself reads it once, and the status says so', async ($, on) => {
+  const { forks, files, links } = world(on, () => 'verdict: none')
+  files['/work/repo/VISION.md'] = `<!-- course-keeper: anti-patterns = VISION.md -->\n${VISION}`
+
+  const line = 'VISION.md: the vision itself (named in VISION.md). No separate file is used.'
+  expect(await status($)).toContain(`VISION.md: /work/repo/VISION.md\n${line}\nChecks:`)
+  await command($, 'check')
+  expect(forks[0]).not.toContain('# Anti-patterns:')
+
+  // A link to the vision is the vision too.
+  files['/work/repo/VISION.md'] = `<!-- course-keeper: anti-patterns = docs/avoid.md -->\n${VISION}`
+  links['/work/repo/docs/avoid.md'] = '/work/repo/VISION.md'
+  expect(await status($)).toContain(
+    'docs/avoid.md: the vision itself (named in VISION.md). No separate file is used.\nChecks:',
+  )
+})
+
+test('a directive whose file a link leads outside the project is not read', async ($, on) => {
+  const { forks, files, links } = world(on, () => 'verdict: none')
+  files['/work/repo/VISION.md'] = NAMED
+  files['/elsewhere/avoid.md'] = '# Secret\n'
+  links['/work/repo/docs/vision/avoid.md'] = '/elsewhere/avoid.md'
+
+  expect(await status($)).toContain(
+    'docs/vision/avoid.md: not found or not readable (named in VISION.md). The vision alone is used.',
+  )
+  await command($, 'check')
+  expect(forks[0]).not.toContain('# Secret')
+})
+
+test('a directive whose file a link leads to a file other than Markdown or a hidden folder is not read', async ($, on) => {
+  const { forks, files, links } = world(on, () => 'verdict: none')
+  files['/work/repo/VISION.md'] = NAMED
+  files['/work/repo/.env'] = 'TOKEN=secret\n'
+  files['/work/repo/.private/secrets.md'] = '# Private secret\n'
+  const missing =
+    'docs/vision/avoid.md: not found or not readable (named in VISION.md). The vision alone is used.\nChecks:'
+
+  links['/work/repo/docs/vision/avoid.md'] = '/work/repo/.env'
+  expect(await status($)).toContain(missing)
+  await command($, 'check')
+  expect(forks[0]).not.toContain('secret')
+  expect(forks[0]).not.toContain('# Anti-patterns:')
+
+  links['/work/repo/docs/vision/avoid.md'] = '/work/repo/.private/secrets.md'
+  expect(await status($)).toContain(missing)
+  await command($, 'check')
+  expect(forks[1]).not.toContain('Private secret')
+  expect(forks[1]).not.toContain('# Anti-patterns:')
+
+  // A link to a Markdown file outside hidden folders is followed.
+  files['/work/repo/notes/avoid.md'] = ANTI_PATTERNS
+  links['/work/repo/docs/vision/avoid.md'] = '/work/repo/notes/avoid.md'
+  expect(await status($)).toContain('docs/vision/avoid.md: /work/repo/docs/vision/avoid.md (named in VISION.md)')
+})
+
 test('a project root whose real path cannot be told has no vision', async ($, on) => {
   const { links } = world(on, () => 'verdict: none')
   links['/work/repo'] = '/gone'
