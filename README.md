@@ -151,3 +151,7 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 - Checks for one session: `/course-keeper off`.
 - Everything for a project: remove or rename `VISION.md`.
 - Everything everywhere: `claude plugin disable course-keeper`, or `claude plugin uninstall course-keeper`.
+
+## Licence
+
+MIT. See `LICENSE`.
