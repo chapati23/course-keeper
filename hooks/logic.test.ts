@@ -420,9 +420,9 @@ describe('the headline', () => {
 
   test('an invariant reference names the invariant and its title when the alert has one', () => {
     expect(alertHeadline(alertOf({ title: 'One service sets every price' }))).toBe(
-      'Course keeper: this session breaks invariant 2 (One service sets every price)',
+      'Course Keeper: this session breaks invariant 2 (One service sets every price)',
     )
-    expect(alertHeadline(alertOf())).toBe('Course keeper: this session breaks invariant 2')
+    expect(alertHeadline(alertOf())).toBe('Course Keeper: this session breaks invariant 2')
   })
 
   test('an instruction reference quotes the words, cut to 60 characters', () => {
@@ -954,7 +954,7 @@ describe('turns and excerpts', () => {
       row('user', 'Add the checkout.'),
       row('assistant', 'I will add a price table in the client.'),
       row('user', '<command-name>/course-keeper</command-name><command-args>learn it kept prices in the client</command-args>'),
-      row('user', '<local-command-stdout>Course keeper read this as the act you corrected</local-command-stdout>'),
+      row('user', '<local-command-stdout>Course Keeper read this as the act you corrected</local-command-stdout>'),
     ]
     const turn = turnOf(command, 1)
     expect(turn).toEqual({ start: 0, end: 1 })
@@ -1525,7 +1525,7 @@ describe('the learn answers', () => {
     const text = draftText(draftOf())
     expect(text).toBe(
       [
-        'Course keeper read this as the act you corrected:',
+        'Course Keeper read this as the act you corrected:',
         '  The agent planned to round money in the exporter.',
         'The agent\'s words: "I will round the total in the exporter before it writes the file."',
         '',
@@ -1564,9 +1564,9 @@ describe('the learn answers', () => {
         'Test on 2 earlier turns of this session: no new alert.',
         'Must stay allowed: Formatting an amount that the module computed.',
         '',
-        'Where it comes from: the agent\'s words "I will round the total in the exporter before it writes the file."; drafted 2026-11-23 UTC by example-model; course keeper 0.1.0.',
+        'Where it comes from: the agent\'s words "I will round the total in the exporter before it writes the file."; drafted 2026-11-23 UTC by example-model; Course Keeper 0.1.0.',
         '',
-        'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+        'This is a draft for the owners of VISION.md. Course Keeper does not change the file.',
         '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
         '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
         '  too broad and 4 too narrow.',
@@ -1643,9 +1643,9 @@ describe('the learn answers', () => {
         '  Never round, convert or add up money outside the one module, for example the exporter total: call the module instead.',
         'Must stay allowed: Formatting an amount that the module computed.',
         '',
-        'Where it comes from: the agent\'s words "I will round the total in the exporter before it writes the file."; drafted 2026-11-23 UTC by example-model; course keeper 0.1.0.',
+        'Where it comes from: the agent\'s words "I will round the total in the exporter before it writes the file."; drafted 2026-11-23 UTC by example-model; Course Keeper 0.1.0.',
         '',
-        'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+        'This is a draft for the owners of VISION.md. Course Keeper does not change the file.',
         '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
         '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
         '  too broad and 4 too narrow.',
@@ -1659,7 +1659,7 @@ describe('the learn answers', () => {
 
   test('a sentence for the anti-patterns file names both files', () => {
     const owners =
-      'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course keeper does not change the files.'
+      'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course Keeper does not change the files.'
     const report = learnReport({
       draft: draftOf(),
       target: 1,
@@ -1693,12 +1693,12 @@ describe('the learn answers', () => {
     })
     expect(report).toMatch(/^Draft sentence for docs\/avoid\.md, under invariant 1:\n/)
     expect(report).toContain(
-      'This is a draft for the owners of docs/avoid.md and docs/course.md. Course keeper does not change the files.',
+      'This is a draft for the owners of docs/avoid.md and docs/course.md. Course Keeper does not change the files.',
     )
     const untested = untestedReport({ draft: draftOf(), target: 4, isNew: true, names })
     expect(untested).toContain('Draft sentence for docs/course.md, as a new invariant (not tested):')
     expect(untested).toContain(
-      'This is a draft for the owners of docs/course.md. Course keeper does not change the file.',
+      'This is a draft for the owners of docs/course.md. Course Keeper does not change the file.',
     )
     expect(untested).not.toContain('VISION.md')
   })

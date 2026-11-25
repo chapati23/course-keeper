@@ -94,11 +94,11 @@ def verify(repo, scratch, evidence):
             if "Checks: on for this session." not in (evidence / "doctor.txt").read_text():
                 raise RuntimeError("Expected a fresh session with checks on")
             for state in ("off", "on"):
-                command(state, state, f"Course keeper checks are {state} for this session.")
+                command(state, state, f"Course Keeper checks are {state} for this session.")
                 command("status-" + state, "", f"Checks: {state} for this session.")
                 stores = list((profile / "plugins/store").glob("course-keeper*.json"))
                 if len(stores) != 1:
-                    raise RuntimeError("Expected one Course keeper store")
+                    raise RuntimeError("Expected one Course Keeper store")
                 data = stores[0].read_text()
                 (evidence / ("store-" + state + ".json")).write_text(data)
                 records = list(json.loads(data).values())

@@ -9,7 +9,7 @@ Change it only together with an eval run.
 
 <system-reminder>
 This message does not come from the person you work for, and it is not part of your task.
-It is a check that the Course keeper plugin runs on a copy of this session at the end of a turn.
+It is a check that the Course Keeper plugin runs on a copy of this session at the end of a turn.
 
 - You are a separate copy. The session itself continues without you. Do not continue its work.
 - You have no tools here. You cannot read files or run commands. Use only what this conversation

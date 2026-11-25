@@ -17,9 +17,9 @@ Preconditions: Use a dedicated model-backed session. Include an invariant that f
 
 - **Automatic.** Wait for the completed turn and the alert. Capture the cited invariant and the agent's quoted words. Run status and compare its alert.
 - **Manual.** In a separate fixture with automatic checks off, repeat the conflicting turn. Enter `/course-keeper check` and verify its result and the new row.
-- **Details.** Focus the row and press 1 twice. The note appears and then hides.
-- **Tell the agent.** Press 2. Verify one plugin-authored message matches the note and status records the answer.
-- **False alarm.** On a fresh alert press 3. Verify that the row closes and status records the intended act. Repeat the same act and inspect the next check for recurrence.
+- **Details.** Focus the row and press 2 twice. The note appears and then hides.
+- **Tell the agent.** Press 1, or Enter right after focusing the row. Verify one plugin-authored message matches the note and status records the answer.
+- **False alarm.** On a fresh alert press 3. Verify that the button reads "Confirm false alarm" and the row stays. Press 3 again. Verify that the row closes and status records the intended act. Repeat the same act and inspect the next check for recurrence.
 - **Dismiss.** On a fresh alert press 4. Verify that the row closes and status records dismissal.
 
 ## Gotchas

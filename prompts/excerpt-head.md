@@ -5,7 +5,7 @@ separate call. Measured together with learn v1. Change it only together with an 
 -->
 
 <system-reminder>
-This is a check that the Course keeper plugin runs on a coding session between a person and an
+This is a check that the Course Keeper plugin runs on a coding session between a person and an
 AI agent. You are not part of that session.
 
 - You see only excerpts of the session, at the end of this message: every message the person

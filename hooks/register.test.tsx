@@ -30,9 +30,9 @@ const BAND = {
     hasSurvey: false,
     isCollapsed: false,
     isWorking: false,
-    maxRows: 12,
+    maxRows: 40,
     bodyColumns: 80,
-    scroll: { offset: 0, bodyRows: 11 },
+    scroll: { offset: 0, bodyRows: 39 },
     view: {},
   },
 } as const
@@ -239,21 +239,59 @@ function lineOf(node: unknown): string {
   return children.map(lineOf).join('')
 }
 
+/**
+ * The lines a node draws: a column Box stacks its children, `marginTop`
+ * adds an empty line above, `paddingLeft` indents; any other node is one line.
+ */
+function linesOf(node: unknown): string[] {
+  if (typeof node !== 'object' || node === null) return [lineOf(node)]
+  const { type, props = {}, children = [] } = node as Drawn
+  if (type !== 'Box') return [lineOf(node)]
+  const inner =
+    props.flexDirection === 'column'
+      ? children.flatMap(linesOf)
+      : [children.map(lineOf).join('')]
+  const pad = ' '.repeat(typeof props.paddingLeft === 'number' ? props.paddingLeft : 0)
+
+  return [
+    ...(typeof props.marginTop === 'number' && props.marginTop > 0 ? [''] : []),
+    ...inner.map(l => (l === '' ? l : pad + l)),
+    ...(typeof props.marginBottom === 'number' && props.marginBottom > 0 ? [''] : []),
+  ]
+}
+
 /** The band's row, one string per line, as the terminal draws it. */
 async function rowLines(ui: {
-  find: (query: { type: string }) => Promise<{ children: unknown[] } | undefined>
+  find: (query: { type: string }) => Promise<unknown>
 }): Promise<string[]> {
   const outer = await ui.find({ type: 'Box' })
 
-  return outer === undefined ? [] : outer.children.map(lineOf)
+  return outer === undefined ? [] : linesOf(outer)
 }
+
+/** The frame's rules at the test band's 80 columns. */
+const TOP = (banner: string) => {
+  const head = `── ▲ ${banner} · Course Keeper `
+
+  return head + '─'.repeat(80 - head.length)
+}
+const BOTTOM = '─'.repeat(80)
+const ACTIONS =
+  '  1: Tell the agent · 2: Details · 3: False alarm · 4: Dismiss · ctrl+x tab'
 
 /** The row for DEVIATION with the test's VISION. */
 const ROW = [
-  '▲ Course keeper: this session breaks invariant 1 (One service sets every price)',
-  '- The session adds a price table to the client, which contradicts invariant 1.',
-  '- Evidence: "I will add a fallback price table in the client."',
-  '1: Details · 2: Tell the agent · 3: False alarm · 4: Dismiss',
+  '',
+  TOP('Session breaks invariant 1'),
+  '  Your rule: "One service sets every price"',
+  '',
+  '  What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
+  '',
+  '  Quote: "I will add a fallback price table in the client."',
+  '',
+  ACTIONS,
+  BOTTOM,
+  '',
 ]
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -280,7 +318,7 @@ test('a turn ends, the check finds a deviation, the band shows it, Dismiss clear
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'dismiss' })
-  expect(await ui.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Course Keeper/ })).toBeUndefined()
   await ui.unmount()
 
   // The same deviation again is not shown again, and the check sees the answer.
@@ -288,11 +326,11 @@ test('a turn ends, the check finds a deviation, the band shows it, Dismiss clear
   await settle(clock)
   expect(forks[1]).toContain("The person's answer: dismissed.")
   const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await again.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  expect(await again.find({ type: 'Text', text: /Course Keeper/ })).toBeUndefined()
   await again.unmount()
 })
 
-test('Details shows the text for the agent as one more bullet, and hides it again', async ($, on) => {
+test('Details shows the text for the agent as one more part, and hides it again', async ($, on) => {
   const { clock } = world(on, () => DEVIATION)
 
   await personTypes($, 'ok')
@@ -303,13 +341,131 @@ test('Details shows the text for the agent as one more bullet, and hides it agai
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'details' })
   expect(await rowLines(ui)).toEqual([
-    ...ROW.slice(0, 3),
-    '- For the agent: Invariant 1 says one service sets every price. Move the table into that service.',
-    ROW[3],
+    ...ROW.slice(0, 7),
+    '',
+    '  For the agent: Invariant 1 says one service sets every price. Move the table into that service.',
+    ...ROW.slice(7),
   ])
   await ui.press({ key: 'details' })
   expect(await rowLines(ui)).toEqual(ROW)
   await ui.unmount()
+})
+
+test('Tell the agent is on key 1 and takes the focus first, Details is on key 2', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const tellButton = await ui.find({ type: 'Button', key: 'tell' })
+  expect(tellButton?.props.hotkey).toBe('1')
+  expect(tellButton?.props.autoFocus).toBe(true)
+  expect((await ui.find({ type: 'Button', key: 'details' }))?.props.hotkey).toBe('2')
+  await ui.unmount()
+})
+
+test('the frame is drawn at most 100 cells wide', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({
+    ...BAND,
+    surface: 'terminal',
+    props: { ...BAND.props, bodyColumns: 160 },
+  })
+  const lines = await rowLines(ui)
+  expect(lines[1]).toHaveLength(100)
+  expect(lines.at(-2)).toBe('─'.repeat(100))
+  await ui.unmount()
+})
+
+test('a band too short for the frame drops its empty lines, so the actions stay in view', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({
+    ...BAND,
+    surface: 'terminal',
+    props: { ...BAND.props, maxRows: 9 },
+  })
+  expect(await rowLines(ui)).toEqual(ROW.filter(line => line !== ''))
+  await ui.unmount()
+})
+
+test('a band too short even for the compact frame draws the buttons in its first line', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({
+    ...BAND,
+    surface: 'terminal',
+    props: { ...BAND.props, maxRows: 5 },
+  })
+  const lines = await rowLines(ui)
+  // The buttons are in the band's first line, so their hotkeys answer.
+  expect(lines).toEqual([
+    `▲ Invariant 1 · ${ACTIONS.trim()}`,
+    ...ROW.slice(2, 8).filter(line => line !== ''),
+    BOTTOM,
+  ])
+  await ui.unmount()
+})
+
+test('a long instruction that wraps in a narrow band counts its rows, so the buttons move up', async ($, on) => {
+  const words = 'never add a price table, a cache or a fallback to the client'
+  const { clock } = world(on, () =>
+    DEVIATION.replace('reference: invariant 1', `reference: instruction "${words}"`),
+  )
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  // At 40 cells the top rule takes 2 rows and the instruction line 3: the
+  // compact frame needs about 13 rows, more than the band's 12.
+  const ui = await $.ui.mount({
+    ...BAND,
+    surface: 'terminal',
+    props: { ...BAND.props, bodyColumns: 40, maxRows: 12 },
+  })
+  expect((await rowLines(ui))[0]).toBe(`▲ Your instruction · ${ACTIONS.trim()}`)
+  await ui.unmount()
+})
+
+test('False alarm asks for a second press before it records the answer', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'false-alarm' })
+  expect((await ui.find({ type: 'Button', key: 'false-alarm' }))?.props.label).toBe(
+    'Confirm false alarm',
+  )
+  expect(await status($)).not.toContain('Answer: false alarm')
+  // Dismiss still answers as dismissed, not as a false alarm.
+  await ui.press({ key: 'dismiss' })
+  await ui.unmount()
+  expect(await status($)).toContain('Answer: dismissed')
 })
 
 test('Dismiss is on key 4 and False alarm on key 3, which later checks read as a false alarm', async ($, on) => {
@@ -321,7 +477,7 @@ test('Dismiss is on key 4 and False alarm on key 3, which later checks read as a
   await settle(clock)
   // The notification has the row's headline and the alert sentence.
   expect(notified).toEqual([
-    'Course keeper: this session breaks invariant 1 (One service sets every price)\n' +
+    'Course Keeper: this session breaks invariant 1 (One service sets every price)\n' +
       'The session adds a price table to the client, which contradicts invariant 1.',
   ])
 
@@ -329,7 +485,8 @@ test('Dismiss is on key 4 and False alarm on key 3, which later checks read as a
   expect((await ui.find({ type: 'Button', key: 'dismiss' }))?.props.hotkey).toBe('4')
   expect((await ui.find({ type: 'Button', key: 'false-alarm' }))?.props.hotkey).toBe('3')
   await ui.press({ key: 'false-alarm' })
-  expect(await ui.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  await ui.press({ key: 'false-alarm' })
+  expect(await ui.find({ type: 'Text', text: /Course Keeper/ })).toBeUndefined()
   await ui.unmount()
 
   expect(await status($)).toContain(
@@ -342,7 +499,7 @@ test('Dismiss is on key 4 and False alarm on key 3, which later checks read as a
   )
 })
 
-test('an instead field draws as its own bullet between the alert and the evidence', async ($, on) => {
+test('an instead field draws as its own part between the alert and the quote', async ($, on) => {
   const { clock } = world(on, () =>
     DEVIATION.replace('evidence:', 'instead: Move the table into the price service.\nevidence:'),
   )
@@ -355,12 +512,13 @@ test('an instead field draws as its own bullet between the alert and the evidenc
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await rowLines(ui)).toEqual([
-      ...ROW.slice(0, 2),
-      '- Instead: Move the table into the price service.',
-      ...ROW.slice(2),
+      ...ROW.slice(0, 5),
+      '',
+      '  What it should do instead: Move the table into the price service.',
+      ...ROW.slice(5),
     ])
     // Not dim: it weighs as much as the alert.
-    expect((await ui.find({ type: 'Text', text: /^- Instead/ }))?.props.dimColor).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: /^Move the table into/ }))?.props.dimColor).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -376,9 +534,10 @@ test('an instruction reference quotes the words in the headline', async ($, on) 
   await settle(clock)
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await rowLines(ui))[0]).toBe(
-    '▲ Course keeper: this session breaks your instruction "never add a table to the client"',
-  )
+  expect((await rowLines(ui)).slice(1, 3)).toEqual([
+    TOP('Session breaks your instruction'),
+    '  Your instruction: "never add a table to the client"',
+  ])
   await ui.unmount()
 })
 
@@ -414,10 +573,8 @@ test('an alert stored before alerts kept a title still draws, without a title', 
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await rowLines(ui)).toEqual([
-      '▲ Course keeper: this session breaks invariant 1',
-      ...ROW.slice(1),
-    ])
+    // No title: no "Your rule" line.
+    expect(await rowLines(ui)).toEqual([ROW[0], ROW[1], ...ROW.slice(3)])
     await ui.unmount()
   }
 })
@@ -437,10 +594,10 @@ test('Tell the agent sends the note as the plugin, not as the person', async ($,
   const sent = submitted.at(-1)
   expect(sent?.origin).toBe('plugin')
   expect(sent?.text).toBe(
-    'Course keeper alert on invariant 1. Evidence: "I will add a fallback price table in the client.". ' +
+    'Course Keeper alert on invariant 1. Evidence: "I will add a fallback price table in the client.". ' +
       'Note: Invariant 1 says one service sets every price. Move the table into that service.',
   )
-  expect(await ui.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Course Keeper/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -485,7 +642,7 @@ test('a standing instruction is noted, kept through compaction, and forgotten', 
   await personTypes($, 'never post to the tracker without my yes')
   await settle(clock)
   expect(toasts).toEqual([
-    'Course keeper noted a standing instruction: "never post to the tracker without my yes"',
+    'Course Keeper noted a standing instruction: "never post to the tracker without my yes"',
   ])
   await $.session.compact({
     trigger: 'manual',
@@ -624,7 +781,7 @@ test('a note that does not enter is not recorded as told, and a double press sen
   await ui.press({ key: 'tell' })
   await settle(clock)
   expect(toasts.at(-1)).toBe(
-    'Course keeper could not send the note to the agent. The alert is shown again.',
+    'Course Keeper could not send the note to the agent. The alert is shown again.',
   )
   expect(await ui.find({ type: 'Text', text: /contradicts invariant 1/ })).toBeDefined()
   expect(await status($)).toContain('Answer: none yet.')
@@ -790,7 +947,7 @@ test('the store keeps the newest record when an older save is slow', async ($, o
   const off = command($, 'off')
   await settle(clock)
   release()
-  expect(await off).toBe('Course keeper checks are off for this session.')
+  expect(await off).toBe('Course Keeper checks are off for this session.')
   await settle(clock)
 
   expect(writes).toBe(2)
@@ -853,7 +1010,7 @@ test('a check that lost its in-flight mark does not replace a newer alert', asyn
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /contradicts invariant 1/ }))?.text).toBe(
-    '- The session adds a price table to the client, which contradicts invariant 1.',
+    'What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
   )
   await ui.unmount()
   // The dropped reply leaves the newer check's outcome in the status.
@@ -880,7 +1037,7 @@ test('/course-keeper off during the fork of a turn check shows nothing', async (
   await settle(clock)
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /Course keeper/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Course Keeper/ })).toBeUndefined()
   await ui.unmount()
   expect(notified).toEqual([])
   expect(await status($)).toContain('did not run: checks are off.')
@@ -919,7 +1076,7 @@ test('/course-keeper off answers only after the store holds the change', async (
   await settle(clock)
   expect(isAnswered).toBe(false)
   release()
-  expect(await off).toBe('Course keeper checks are off for this session.')
+  expect(await off).toBe('Course Keeper checks are off for this session.')
   expect(storedAtAnswer).toMatchObject({ record: { isOff: true } })
 })
 
@@ -1082,7 +1239,7 @@ const DRAFT = [
   'allowed: Showing a price that the service sent.',
 ].join('\n')
 const SHOWN = [
-  'Course keeper read this as the act you corrected:',
+  'Course Keeper read this as the act you corrected:',
   '  The agent planned a price table in the client.',
   'The agent\'s words: "I will add a fallback price table in the client."',
   '',
@@ -1148,9 +1305,9 @@ test('learn drafts a sentence, shows the act, and tests it on excerpts of the se
       'Test on 1 earlier turn of this session: 1 new alert: "I will keep prices in the service.". Read it: such an alert can be sound.',
       'Must stay allowed: Showing a price that the service sent.',
       '',
-      'Where it comes from: the agent\'s words "I will add a fallback price table in the client."; drafted 2023-11-14 UTC by session-model; course keeper 0.1.0.',
+      'Where it comes from: the agent\'s words "I will add a fallback price table in the client."; drafted 2023-11-14 UTC by session-model; Course Keeper 0.1.0.',
       '',
-      'This is a draft for the owners of VISION.md. Course keeper does not change the file.',
+      'This is a draft for the owners of VISION.md. Course Keeper does not change the file.',
       '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
       '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
       '  too broad and 4 too narrow.',
@@ -1296,7 +1453,7 @@ test('with an anti-patterns file, a sentence for an invariant is tested in the a
   const report = await command($, 'learn yes')
   expect(report).toContain(`Draft sentence for ANTI-PATTERNS.md, under invariant 1:\n  ${SENTENCE}\n`)
   expect(report).toContain(
-    'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course keeper does not change the files.',
+    'This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. Course Keeper does not change the files.',
   )
   const verify = completions.find(p => p.includes(SENTENCE))
   expect(verify).toContain(
@@ -1309,7 +1466,7 @@ test('with an anti-patterns file, a sentence for an invariant is tested in the a
   await command($, 'learn')
   const again = await command($, 'learn yes')
   expect(again).toContain('Draft sentence for VISION.md, as a new invariant:')
-  expect(again).toContain('This is a draft for the owners of VISION.md. Course keeper does not change the file.')
+  expect(again).toContain('This is a draft for the owners of VISION.md. Course Keeper does not change the file.')
   expect(completions.at(-1)).toContain(`2. ${SENTENCE}\n\n# Anti-patterns:`)
 })
 
@@ -1578,7 +1735,7 @@ test('without the session\'s model the test does not run and the draft waits', a
   await command($, 'learn')
   model = 'fail'
   expect(await command($, 'learn yes')).toContain(
-    "The test could not run: course keeper could not read the session's model.",
+    "The test could not run: Course Keeper could not read the session's model.",
   )
   expect(completions).toHaveLength(0)
   model = 'session-model'
@@ -1924,7 +2081,7 @@ test('a turn too long for the excerpt is not tested when the agent\'s words fall
       'so the sentence could not be tested. The draft is dropped.\n\n' +
       `Draft sentence for VISION.md, invariant 1 (not tested):\n  ${SENTENCE}\n`,
   )
-  expect(answer).toContain('This is a draft for the owners of VISION.md. Course keeper does not change the file.')
+  expect(answer).toContain('This is a draft for the owners of VISION.md. Course Keeper does not change the file.')
   expect(completions).toHaveLength(0)
   expect(await command($, 'learn yes')).toBe(NO_DRAFT)
 })

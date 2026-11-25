@@ -2,9 +2,9 @@
 status: accepted
 ---
 
-# The course keeper alerts the person and never acts on the agent by itself
+# The Course Keeper alerts the person and never acts on the agent by itself
 
-A check is one model reply about a long session, and it can be wrong. So the course keeper only
+A check is one model reply about a long session, and it can be wrong. So the Course Keeper only
 shows an alert to the person. The note reaches the agent only when the person presses
 "Tell the agent", and the plugin never denies, changes or stops the agent's work. The person
 keeps the decision, and a wrong alert costs one key press.

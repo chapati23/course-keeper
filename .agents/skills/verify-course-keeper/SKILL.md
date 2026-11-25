@@ -1,9 +1,9 @@
 ---
 name: verify-course-keeper
-description: "Drive the Course keeper plugin in an isolated Claude Code terminal to verify session controls, inspect an alert, or check standing instructions and learn drafts."
+description: "Drive the Course Keeper plugin in an isolated Claude Code terminal to verify session controls, inspect an alert, or check standing instructions and learn drafts."
 ---
 
-# Verify Course keeper
+# Verify Course Keeper
 
 ## Launch
 
