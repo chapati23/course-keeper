@@ -2,7 +2,7 @@
   <img src="docs/images/banner.png" alt="Course Keeper. Catches the turn where your agent breaks your rules. A plugin for Claude Code." width="800">
 </p>
 
-You wrote down how your project works. One module handles money. The tool never sends email. Three hours into a session, your agent takes a shortcut that breaks one of those rules, and you find it in review the next day.
+You wrote down how your project works. One module handles money. The tool never sends an invoice. Three hours into a session, your agent takes a shortcut that breaks one of those rules, and you find it in review the next day.
 
 **Course Keeper checks every turn of a Claude Code session against your project's rules.** When the agent breaks one, an alert appears above the prompt at that turn. It names the rule, says what the agent is doing and what it should do instead, and quotes the agent. One key sends that note to the agent.
 
@@ -10,34 +10,17 @@ You wrote down how your project works. One module handles money. The tool never 
 
 <sub>The agent's one-line fix rounds money outside the one module that the project's rule allows. The session is staged with a scripted model reply; the Claude Code interface and the plugin are real.</sub>
 
-## Why try it
-
-- **Your rules, in plain Markdown.** You write them once in `VISION.md`, as a numbered list of sentences.
-- **Evidence with every alert.** Each alert cites the rule by its number and quotes the agent's own words, so you can judge it in seconds.
-- **Silent when nothing is wrong.** A turn that keeps the rules shows nothing.
-- **You stay in charge.** Course Keeper never blocks, edits or stops the agent's work. It tells you, and you decide whether the agent hears about it.
-- **It remembers what you said.** When a prompt gives an instruction that holds beyond one task, such as "never push to main", Course Keeper notes it, and later turns are checked against it too.
-- **It learns from your corrections.** When you correct the agent on something that no alert caught, `/course-keeper learn` drafts the missing rule and tests it on this session before you add it.
-
-## How it works
-
-1. You add `VISION.md` to your repository: one sentence about the project and a numbered list of rules.
-2. After each turn of the agent, Course Keeper asks the session's own model one question: did this turn break a rule, or an instruction you gave in this session?
-3. If it did, the alert appears. Press `1` to tell the agent, `2` for details, `3` for a false alarm or `4` to dismiss.
-
-![The same session after "Tell the agent". A message from the course-keeper plugin carries the alert's note, and the agent answers that rounding in the exporter would break invariant 1 and that it will round in the money module.](docs/images/tell-the-agent.png)
-
-<sub>After `1: Tell the agent`, the note reaches the agent as a message from the plugin, and the agent changes its plan.</sub>
-
-A false alarm takes two presses. After it, later checks know that the act is fine and do not raise it again. Course Keeper reports to you and never acts on the agent; [the decision record](docs/adr/0001-alert-the-person-never-act-on-the-agent.md) gives the reasons.
-
 ## Quick start
+
+You need Claude Code 2.1.323 or later (`claude --version`).
 
 1. Install the plugin at the prompt of a Claude Code session:
 
    ```
    /plugin install course-keeper --marketplace chapati23/course-keeper
    ```
+
+   Answer `y` to add the marketplace, then choose a scope. Claude Code then asks for two file names; keep the defaults.
 
 2. Add a `VISION.md` at the root of your repository, with one rule per number:
 
@@ -50,9 +33,31 @@ A false alarm takes two presses. After it, later checks know that the act is fin
    2. **The tool never sends an invoice.** It writes files; the person sends them.
    ```
 
-3. Run `/course-keeper`. It shows the vision file that Course Keeper found, and the alerts of this session.
+   Each numbered rule is an invariant. An alert cites it by its number.
+
+3. Ask the agent anything in that repository. When it has answered, run `/course-keeper`. The line `Last check: …, verdict: none.` means that the check ran and found no deviation. From then on, you see an alert only when a turn breaks a rule.
 
 Without `VISION.md`, Course Keeper does nothing in that project.
+
+## Why try it
+
+- **Your rules, in plain Markdown.** You write them once in `VISION.md`, as a numbered list of sentences.
+- **Silent when nothing is wrong.** A turn that keeps the rules shows nothing. The check runs after the turn has ended, so you can keep typing.
+- **You stay in charge.** Course Keeper never blocks, edits or stops the agent's work. It tells you, and you decide whether the agent hears about it ([the decision record](docs/adr/0001-alert-the-person-never-act-on-the-agent.md)).
+
+## How it works
+
+1. After each turn of the agent, Course Keeper asks the session's own model one question: did this turn break a rule in `VISION.md`, or an instruction you gave in this session?
+2. If it did, the alert appears. Press `1` to tell the agent, `2` for details, `3` for a false alarm or `4` to dismiss.
+
+![A message from the course-keeper plugin carries the alert's note to the agent, and the agent answers that rounding in the exporter would break invariant 1 and that it will round in the money module.](docs/images/tell-the-agent.png)
+
+<sub>After `1: Tell the agent`, the note reaches the agent as a message from the plugin, and the agent changes its plan.</sub>
+
+Two more things happen in the background:
+
+- **It remembers what you said.** When a prompt gives an instruction that holds beyond one task, such as "never push to main", Course Keeper notes it, and later turns are checked against it too.
+- **It learns from your answers.** A false alarm takes two presses, and later checks do not raise it again. When you correct the agent on something that no alert caught, `/course-keeper learn` drafts the missing rule and tests it on this session before you add it.
 
 ## Write rules that get caught
 
@@ -85,7 +90,7 @@ In replay tests on recorded sessions of one private project, the check raised no
 
 ## Limits
 
-- The plugin needs Claude Code 2.1.323 or later. Its plugin API is early access and can change between releases.
+- The plugin API of Claude Code is early access and can change between releases.
 - VS Code has no row above the prompt. There, `/course-keeper` shows the alerts.
 - Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
@@ -95,6 +100,10 @@ In replay tests on recorded sessions of one private project, the check raised no
 - Checks for one session: `/course-keeper off`.
 - Everything for a project: remove or rename `VISION.md`.
 - Everything everywhere: `claude plugin disable course-keeper`, or `claude plugin uninstall course-keeper`.
+
+## Feedback
+
+Course Keeper is new. A false alarm, a missed deviation or a confusing alert helps us most: [open an issue](https://github.com/chapati23/course-keeper/issues) with the rule and the agent's words.
 
 ## Licence
 
