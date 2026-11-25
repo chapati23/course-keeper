@@ -93,7 +93,7 @@ The replay tests ran on recorded sessions of one private project, and they are s
 - The plugin API of Claude Code is early access and can change between releases.
 - VS Code has no row above the prompt. There, `/course-keeper` shows the alerts.
 - Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents.
-- A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
+- A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide. In a test on 2026-11-25, it ran twice on each of 8 turns that had been judged sound and raised no false alert ([details](docs/writing-rules.md#false-alerts)).
 
 ## Turn it off
 
