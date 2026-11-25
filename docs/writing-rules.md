@@ -45,10 +45,10 @@ The vision can name its own anti-patterns file in one line, an HTML comment. Put
 
 Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident. The sentence can stand in the invariant or in the invariant's section of `ANTI-PATTERNS.md`. In the tests below, the sentence stood in the invariant; the tests did not measure the anti-patterns file.
 
-| Invariant | Text |
+| | Invariant text |
 | --- | --- |
-| General statement only | One module computes every amount. |
-| Names the act | One module computes every amount. Never round, convert or add up money in other code, not even for display. |
+| **Avoid:** a general statement only | One module computes every amount. |
+| **Write:** a sentence that names the act | One module computes every amount. Never round, convert or add up money in other code, not even for display. |
 
 This comes from replay tests on recorded sessions of one private project (November 2026). Each test took a recorded turn in which the agent deviated. It ran the check on that turn three times. It also let the agent write its reply again ten times, with the vision added to the agent's context.
 
