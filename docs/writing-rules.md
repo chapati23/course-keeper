@@ -1,24 +1,12 @@
 # Write the vision
 
-Course Keeper checks each session against the rules in your vision file. This page says where the file goes, how to write a rule that the check catches, and what the replay tests measured. Back to the [README](../README.md).
+The [README](../README.md) shows a first `VISION.md` and the main advice: name the act that breaks each rule. This page adds where the file goes, the optional anti-patterns file, and the full results of the replay tests.
 
 ## The vision
 
 Course Keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Both file names can be changed ([Settings](reference.md#settings)). Without the file, Course Keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
 
-The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. An alert cites an invariant by its number. For example:
-
-```markdown
-# Vision
-
-A command-line tool that turns timesheets into invoices.
-
-1. One module computes every amount. No other code does arithmetic on money.
-2. The tool never sends an invoice. It writes files; the person sends them.
-3. Every change keeps the test suite green on the three supported platforms.
-
-Tracked drift: the old exporter still rounds amounts itself (invariant 1).
-```
+The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. The [Quick start](../README.md#quick-start) has an example.
 
 An optional `ANTI-PATTERNS.md` beside `VISION.md` holds the sentences that name acts to avoid, so the vision stays short. It has one section for each invariant, and the heading of a section starts with the number of its invariant. The check reads both files. Without `VISION.md`, Course Keeper does not read the anti-patterns file. For example:
 
@@ -43,14 +31,9 @@ The vision can name its own anti-patterns file in one line, an HTML comment. Put
 
 ### Name the act to avoid
 
-Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident. The sentence can stand in the invariant or in the invariant's section of `ANTI-PATTERNS.md`. In the tests below, the sentence stood in the invariant; the tests did not measure the anti-patterns file.
+[Write rules that get caught](../README.md#write-rules-that-get-caught) in the README shows a general invariant next to one with a sentence that names the act. Write that sentence from the reply in which the agent deviated, not from a summary of the incident. The sentence can stand in the invariant or in the invariant's section of `ANTI-PATTERNS.md`. In the tests below, the sentence stood in the invariant; the tests did not measure the anti-patterns file.
 
-| | Invariant text |
-| --- | --- |
-| **Avoid:** a general statement only | One module computes every amount. |
-| **Write:** a sentence that names the act | One module computes every amount. Never round, convert or add up money in other code, not even for display. |
-
-This comes from replay tests on recorded sessions of one private project (November 2026). Each test took a recorded turn in which the agent deviated. It ran the check on that turn three times. It also let the agent write its reply again ten times, with the vision added to the agent's context.
+The advice comes from replay tests on recorded sessions of one private project (November 2026). Each test took a recorded turn in which the agent deviated. It ran the check on that turn three times. It also let the agent write its reply again ten times, with the vision added to the agent's context.
 
 - In two such turns the vision held only a general statement. The check raised no alert in 3 of 3 tries, and the agent deviated again in 6 to 10 of 10 replies.
 - After one sentence named the act, the check raised an alert in 3 of 3 tries, and the agent deviated again in 0 to 2 of 10 replies.
