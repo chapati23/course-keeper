@@ -1,24 +1,35 @@
-# Course Keeper
+<p align="center">
+  <img src="docs/images/banner.png" alt="Course Keeper. Catches the turn where your coding agent breaks your project's rules. A plugin for Claude Code." width="800">
+</p>
 
-<img src=".claude-plugin/icon.png" alt="The Course Keeper icon: a ship's wheel with eight handles" width="96">
+You wrote down how your project works. One module handles money. The tool never sends email. Three hours into a session, your agent takes a shortcut that breaks one of those rules, and you find it in review the next day.
 
-**Course Keeper tells you when a Claude Code session drifts from your project's rules.** You write the rules once, in `VISION.md`. After each turn of the agent, Course Keeper checks the session against them, and against instructions you gave during the session. When the agent breaks one, an alert appears above the prompt.
+**Course Keeper checks every turn of a Claude Code session against your project's rules.** When the agent breaks one, an alert appears above the prompt at that turn. It names the rule, says what the agent is doing and what it should do instead, and quotes the agent. One key sends that note to the agent.
 
 ![A Claude Code session. The agent proposes to round invoice totals in the exporter. Below its answer, a framed Course Keeper alert says that the session breaks invariant 1, "One module computes every amount", states what the agent is doing and what it should do instead, quotes the agent, and offers four buttons: Tell the agent, Details, False alarm and Dismiss.](docs/images/alert.png)
 
-<sub>The agent's shortcut puts money arithmetic outside the one module that the project's rule allows. The session is staged with a scripted model reply; the Claude Code interface and the plugin are real.</sub>
+<sub>The agent's one-line fix rounds money outside the one module that the project's rule allows. The session is staged with a scripted model reply; the Claude Code interface and the plugin are real.</sub>
+
+## Why try it
+
+- **Your rules, in plain Markdown.** You write them once in `VISION.md`, as a numbered list of sentences.
+- **Evidence with every alert.** Each alert cites the rule by its number and quotes the agent's own words, so you can judge it in seconds.
+- **Silent when nothing is wrong.** A turn that keeps the rules shows nothing.
+- **You stay in charge.** Course Keeper never blocks, edits or stops the agent's work. It tells you, and you decide whether the agent hears about it.
+- **It remembers what you said.** When a prompt gives an instruction that holds beyond one task, such as "never push to main", Course Keeper notes it, and later turns are checked against it too.
+- **It learns from your corrections.** When you correct the agent on something that no alert caught, `/course-keeper learn` drafts the missing rule and tests it on this session before you add it.
 
 ## How it works
 
-1. You write `VISION.md`: what the project is, and a numbered list of rules that every change must keep.
-2. At the end of each turn of the agent, Course Keeper asks the session's model one question: did this turn break a rule, or an instruction you gave in this session?
-3. If it did, you see an alert that names the rule, says what the agent is doing and what it should do instead, and quotes the agent. Press `1` to send the note to the agent.
-
-Course Keeper reports to you. It does not deny, change or stop the agent's work ([the decision and its reason](docs/adr/0001-alert-the-person-never-act-on-the-agent.md)). When nothing deviates, it shows nothing.
+1. You add `VISION.md` to your repository: one sentence about the project and a numbered list of rules.
+2. After each turn of the agent, Course Keeper asks the session's own model one question: did this turn break a rule, or an instruction you gave in this session?
+3. If it did, the alert appears. Press `1` to tell the agent, `2` for details, `3` for a false alarm or `4` to dismiss.
 
 ![The same session after "Tell the agent". A message from the course-keeper plugin carries the alert's note, and the agent answers that rounding in the exporter would break invariant 1 and that it will round in the money module.](docs/images/tell-the-agent.png)
 
 <sub>After `1: Tell the agent`, the note reaches the agent as a message from the plugin, and the agent changes its plan.</sub>
+
+A false alarm takes two presses. After it, later checks know that the act is fine and do not raise it again. Course Keeper reports to you and never acts on the agent; [the decision record](docs/adr/0001-alert-the-person-never-act-on-the-agent.md) gives the reasons.
 
 ## Quick start
 
@@ -41,150 +52,43 @@ Course Keeper reports to you. It does not deny, change or stop the agent's work 
 
 3. Run `/course-keeper`. It shows the vision file that Course Keeper found, and the alerts of this session.
 
-Each check costs one call on the session's model, and each prompt you type one small `haiku` call ([What it costs](#what-it-costs)). Without `VISION.md`, Course Keeper does nothing in that project.
+Without `VISION.md`, Course Keeper does nothing in that project.
 
-## The vision
+## Write rules that get caught
 
-Course Keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Both file names can be changed ([Settings](#settings)). Without the file, Course Keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
+The check catches an act that a rule names. Write each rule so that one sentence names the act that breaks it:
 
-The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. An alert cites an invariant by its number. For example:
-
-```markdown
-# Vision
-
-A command-line tool that turns timesheets into invoices.
-
-1. One module computes every amount. No other code does arithmetic on money.
-2. The tool never sends an invoice. It writes files; the person sends them.
-3. Every change keeps the test suite green on the three supported platforms.
-
-Tracked drift: the old exporter still rounds amounts itself (invariant 1).
-```
-
-An optional `ANTI-PATTERNS.md` beside `VISION.md` holds the sentences that name acts to avoid, so the vision stays short. It has one section for each invariant, and the heading of a section starts with the number of its invariant. The check reads both files. Without `VISION.md`, Course Keeper does not read the anti-patterns file. For example:
-
-```markdown
-# Anti-patterns for the vision
-
-## 1. One module computes every amount
-
-- Never round, convert or add up money in other code, not even for display.
-
-## 2. The tool never sends an invoice
-
-- Never call the mail client from the tool.
-```
-
-The vision can name its own anti-patterns file in one line, an HTML comment. Put the line first in the vision file, above the title; Course Keeper reads it only there. Empty lines before it do not count. The path is relative to the place where Course Keeper looks for the vision (see [Settings](#settings)), not to the vision's own folder. The line overrides the `antiPatternsFile` setting for this project. The line can name only a Markdown file (`.md` or `.markdown`) outside hidden folders, and a symbolic link must lead to such a file too: the project chooses this path, not you, so Course Keeper sends only a file of that kind to the model. The line stays in the text that the check reads. `/course-keeper` shows the file with "(named in VISION.md)", or says that the file was not found or that the line is not used.
-
-```markdown
-<!-- course-keeper: anti-patterns = docs/vision/anti-patterns.md -->
-# Vision
-```
-
-### Name the act to avoid
-
-Write each invariant so that one of its sentences names the act that breaks it. A general statement alone is not enough. Write that sentence from the reply in which the agent deviated, not from a summary of the incident. The sentence can stand in the invariant or in the invariant's section of `ANTI-PATTERNS.md`. In the tests below, the sentence stood in the invariant; the tests did not measure the anti-patterns file.
-
-| Invariant | Text |
+| Rule | Text |
 | --- | --- |
 | General statement only | One module computes every amount. |
 | Names the act | One module computes every amount. Never round, convert or add up money in other code, not even for display. |
 
-This comes from replay tests on recorded sessions of one private project (November 2026). Each test took a recorded turn in which the agent deviated. It ran the check on that turn three times. It also let the agent write its reply again ten times, with the vision added to the agent's context.
+In replay tests on recorded sessions of one private project, the check raised no alert in 3 of 3 tries when the rule held only the general statement. After one sentence named the act, it raised an alert in 3 of 3 tries. The tests are small. [Write the vision](docs/writing-rules.md) has the full results, the optional `ANTI-PATTERNS.md` file and what the tests did not measure.
 
-- In two such turns the vision held only a general statement. The check raised no alert in 3 of 3 tries, and the agent deviated again in 6 to 10 of 10 replies.
-- After one sentence named the act, the check raised an alert in 3 of 3 tries, and the agent deviated again in 0 to 2 of 10 replies.
-- A sentence stops the act that it names and no more. In one test, only 3 of 10 replies also did a related step that the sentence did not name.
+## Commands
 
-A later test tried sentences that were written from one-line summaries of four further deviations:
+| Command | What it does |
+| --- | --- |
+| `/course-keeper` | Shows the vision files found, the standing instructions, this session's alerts and the last check. |
+| `/course-keeper check` | Runs a check now. |
+| `/course-keeper off`, `on` | Switches the checks for this session. |
+| `/course-keeper forget <n>` | Removes standing instruction n. |
+| `/course-keeper learn` | Drafts a rule after you corrected the agent, and tests it on this session. |
 
-- The check named the recorded act in two of the four turns, in one of them only in the note of an alert on another deviation. It missed the act in the other two.
-- Only one of the four deviations came back when the reply was written again. There the agent deviated again in 10 of 10 replies with the sentence in view. The replies used the label that the sentence asked for and kept the act that it did not name.
-- After that sentence was rewritten from the reply itself, the agent deviated again in 0 of 10 replies, and the check raised an alert in 3 of 3 tries.
-- A rewrite does not repair every miss. For one of the two turns that the check missed, the check raised no alert in 3 of 3 tries after the rewrite too.
+## Cost and privacy
 
-The check reads the text as written. A sentence that names too much can raise alerts on sound work, so state its scope in the sentence. The tests did not measure this.
+- Each check is one call on the session's own model, billed to your credentials. It reuses the session's prompt cache while that cache entry is still live.
+- Each prompt you type, if it has at least 12 characters and is not a slash command, costs one small `haiku` call that looks for standing instructions.
+- Course Keeper keeps the standing instructions and alerts of the last 20 sessions in a file under your Claude Code configuration directory. It never writes `VISION.md`.
 
-The tests are small. Every sentence that stopped a deviation was written after its author read that deviation. No test shows that such a sentence stops a different one. The replays ran with every tool denied and without the agent's earlier thinking. Course Keeper does not add VISION.md to the agent's context; it only checks the session against it.
-
-## Install
-
-At the prompt of a terminal session:
-
-```
-/plugin install course-keeper --marketplace chapati23/course-keeper
-```
-
-From a shell:
-
-```
-claude plugin install course-keeper --marketplace chapati23/course-keeper
-```
-
-Answer `y` to add the marketplace, then choose a scope. Update with `claude plugin update course-keeper`, then run `/reload-plugins` or start a new session.
-
-## Settings
-
-Course Keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
-
-A value applies to every project on your machine. Claude Code keeps plugin settings in your user settings and ignores them in a project's settings files ([settings reference](https://code.claude.com/docs/en/settings-reference#pluginconfigs)), so you cannot give one project its own file name this way. To choose the anti-patterns file for one project, put the line `<!-- course-keeper: anti-patterns = <path> -->` first in its vision (see [The vision](#the-vision)). No such line exists for the vision file itself.
-
-| Setting | Default | The file it names |
-| --- | --- | --- |
-| `visionFile` | `VISION.md` | The file that holds the vision. |
-| `antiPatternsFile` | `ANTI-PATTERNS.md` | The optional file that holds the acts to avoid. |
-
-Each value is a path relative to the place where Course Keeper looks for the vision: the root of the repository (the main working tree), or the project root outside a repository. Change a name when the project already has a file of that name that is about something else. An empty value, an absolute path, or a path with `..` or a backslash counts as the default. Course Keeper does not read a file that leads outside the project through a symbolic link; such a file counts as not found. When both settings lead to the same file, Course Keeper reads it as the vision only. The rest of this page uses the default names.
-
-## What you see
-
-When a check finds a deviation, a row above the prompt shows it, as in [the screenshot at the top](#course-keeper).
-
-The top rule names the invariant, or says that the session breaks your instruction. The next line quotes the invariant's title, or the words of the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it; without a title the line is left out. Each part below starts with its heading in bold. The parts give one sentence about the deviation, what the invariant or the instruction asks for instead, and the evidence, a quote from the agent. The "instead" part is left out when the check gave no such text. An empty line separates the frame from the transcript above and the prompt below. The frame is at most 100 columns wide. When it would not fit the space above the prompt, it drops its empty lines; when it still does not fit, the buttons move into its first line. Either way the buttons stay in view, and their keys work. The row has four buttons:
-
-- `1 Tell the agent` sends the note to the agent as a message from the plugin. It has the focus first, so Enter presses it.
-- `2 Details` shows or hides one more part: the note, the text that "Tell the agent" sends.
-- `3 False alarm` asks you to press it again ("Confirm false alarm"). The second press closes the alert and records that this is no deviation, or that you wanted it. Later checks are told so, and do not raise it again.
-- `4 Dismiss` closes the alert.
-
-Press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. Course Keeper also raises a desktop notification where Claude Code offers one. Its title is "Course Keeper: this session breaks invariant 1 (One module computes every amount)", and its text is the sentence about the deviation.
-
-Course Keeper also notes standing instructions: goals or instructions you state in a prompt that stay in force beyond one task. It shows a short notice when it adds one.
-
-## The command
-
-- `/course-keeper` shows whether a VISION.md and a ANTI-PATTERNS.md were found, the standing instructions with their numbers, the alerts of this session with your answers, and the result of the last check.
-- `/course-keeper forget <n>` removes standing instruction n. Later checks are told not to enforce it.
-- `/course-keeper check` runs a check now.
-- `/course-keeper off` and `/course-keeper on` switch the checks for this session. Standing instructions are still noted while checks are off.
-- `/course-keeper learn` drafts one sentence for the vision after you corrected the agent on something that no alert flagged. When the project has a ANTI-PATTERNS.md, a sentence for an existing invariant is for that invariant's section of ANTI-PATTERNS.md; a sentence for a new invariant is always for VISION.md. A copy of the session finds the agent's reply that you corrected and drafts a sentence that starts with "Never". Course Keeper first shows the act and the agent's words, not the sentence. When the agent's words are not found word for word in its replies, it shows nothing of the draft. `/course-keeper learn <what the agent did wrong>` names the act in your words.
-- `/course-keeper learn yes` accepts the act. Course Keeper tests the sentence on excerpts of this session and shows it with the results: whether the check alerts on the turn you corrected with the sentence added, and whether it raises new alerts on up to 3 earlier turns. When the check already alerts on that turn with today's vision, on the invariant that the sentence would join, no sentence is offered. An alert of today's vision on another matter of that turn does not stop the test; the results name it. `/course-keeper learn cancel` drops the draft. A learn step in flight then keeps nothing.
-- Course Keeper never writes VISION.md or ANTI-PATTERNS.md and sends nothing to the agent. The draft is for the owners of the vision.
-
-## What is sent to the model, and when
-
-- **A check**, at the end of each main-agent turn that ends with an answer. Course Keeper asks one question over a copy of the session: the session's own model gets the conversation as the main thread last sent it, plus the agent's final answer of the turn (the copy does not hold it yet) and the check prompt (`prompts/check.md`) with the text of VISION.md and of ANTI-PATTERNS.md (if there is one), the standing instructions and this session's alerts. The copy has no tools and gives one reply. At most one check runs at a time in a session.
-- **A standing-instruction check**, at each prompt you type that is not a slash command and has at least 12 characters. The `haiku` model gets `prompts/extract.md` and your whole prompt as it entered the session (after any other plugin changed or dropped it), and nothing else. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
-- **Tell the agent** sends the note to the agent only when you press the button.
-- **A learn step**, only when you run `/course-keeper learn`. The session's own model gets a copy of the session (a fork, as for a check, with the agent's final answer of the last turn) with the learn prompt (`prompts/learn.md`), the text of VISION.md and of ANTI-PATTERNS.md (if there is one) and your words, if you gave any. After `/course-keeper learn yes`, separate calls send excerpts of the session to the session's model: the summary that replaced the earlier conversation, if there is one, all your messages up to that turn in order, and the rows of one turn. Each call also holds the check prompt (`prompts/check.md`, with `prompts/excerpt-head.md` in place of its head), and the text of VISION.md and of ANTI-PATTERNS.md (if there is one), with or without the draft sentence. It holds no list of standing instructions: the list held now can hold one that your correction created. Your messages in the excerpt show what was in force at that turn. It holds the instructions you withdrew with `/course-keeper forget`, and the check is told not to enforce them.
-
-Course Keeper keeps the standing instructions and alerts of the last 20 sessions in its store, a file under your Claude Code configuration directory. It sends them nowhere else.
-
-## What it costs
-
-Both calls are billed to the session's credentials and count in `/usage`. A check asks the API to serve the conversation from the session's prompt cache; when that cache entry has lapsed, or after `/model`, it pays for the whole conversation again. The standing-instruction check is one `haiku` call per prompt; it holds your whole prompt, so a long paste costs more. A learn step is one fork, then up to 8 excerpt calls on the session's model. No prompt cache serves an excerpt call, so each one pays for its whole excerpt. Cost figures in Claude Code are estimates.
+[Reference](docs/reference.md) lists exactly what each call sends, the settings and the alert's layout.
 
 ## Limits
 
-- The plugin API of Claude Code is early access and can change between releases. The plugin needs Claude Code 2.1.323 or later.
-- VS Code has no row above the prompt. There, and on any surface without the row, an alert still exists: `/course-keeper` shows it.
-- Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents. A session counts as having a person once a prompt arrives from the terminal prompt, from Remote Control, or from its owner in Slack.
+- The plugin needs Claude Code 2.1.323 or later. Its plugin API is early access and can change between releases.
+- VS Code has no row above the prompt. There, `/course-keeper` shows the alerts.
+- Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
-- The learn step tests a sentence only on excerpts of this session: the turn you corrected and up to 3 earlier turns. An alert in the test does not prove that the sentence names the right act. Whether an agent that reads the sentence avoids the act is not measured.
-- The learn step finds the turn you corrected by the agent's words: the last reply that holds them before your last message, or your last turn when no earlier reply holds them. The draft keeps that turn by the number of your messages up to its start, and `/course-keeper learn yes` tests that turn. When that turn no longer holds the agent's words (a compaction can remove it), `/course-keeper learn yes` keeps nothing.
-- An excerpt holds at most 60000 characters of a turn and leaves out the middle of a longer one. When the agent's words fall in that middle, the sentence is shown as not tested and the draft is dropped.
-- The learn test tells each excerpt check not to enforce the instructions withdrawn with `/course-keeper forget` up to now. This also applies to an instruction withdrawn after the tested turn.
 
 ## Turn it off
 
