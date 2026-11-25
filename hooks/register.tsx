@@ -20,6 +20,7 @@ import {
   alertBanner,
   alertRule,
   plainQuote,
+  retried,
   alertsOn,
   answerCurrent,
   antiPatternsDirective,
@@ -979,15 +980,29 @@ async function tell($: $, id: string, shownAt: number) {
   $.ui.toast('Course Keeper could not send the note to the agent. The alert is shown again.')
 }
 
-/** The amber warning mark of the card, drawn by the app rather than a glyph. */
-const WARNING_MARK =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 1.5 15 14.5H1z" fill="#D97706"/><path d="M8 6v4.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="12.2" r=".9" fill="#fff"/></svg>'
+/**
+ * The rows the card takes in the band with its sentence above the buttons:
+ * the headline and the sentence at up to two and three lines, the buttons,
+ * and the border, padding and gaps. A shorter band moves the buttons up.
+ */
+const CARD_ROWS = 10
+
+/** The Course Keeper wheel, as in docs/icon.svg with rounded corners: the card's mark. */
+const LOGO_MARK =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" ><rect width="1024" height="1024" rx="230" fill="#0F3B36"/><g transform="translate(512 512) scale(1.22)" fill="#F4F0E6"><circle r="188" fill="none" stroke="#F4F0E6" stroke-width="60"/><circle r="82"/><g transform="rotate(0)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(45)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(90)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(135)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(180)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(225)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(270)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(315)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g></g></svg>'
 
 /**
  * The alert on a surface that draws its own controls (the desktop app, VS
- * Code, a phone): a card with the app's border and spacing, the headline as
- * its one strong line, the rule, the buttons, then the parts. The order never changes,
- * so Details does not move the buttons; the band scrolls a tall card.
+ * Code, a phone): a compact card that fits the band. One strong line names
+ * the rule the session breaks, after the Course Keeper wheel and before a
+ * close button; one sentence says what the agent did; then the buttons, with
+ * the reference and the plugin's name small at the row's end. Details opens
+ * what the agent should do instead, its words and the note under the
+ * buttons, and brings them into view.
+ *
+ * No number keys: in the app they answer only after a click on the card,
+ * and a click on the button does it in one step. No Button takes the focus
+ * first, so a stray Enter sends nothing.
  */
 function alertCard(
   { Box, Button, Text, Svg }: Pick<Elements['desktop'], 'Box' | 'Button' | 'Text' | 'Svg'>,
@@ -996,9 +1011,16 @@ function alertCard(
   held: CourseKeeperSession,
   shown: CourseKeeperAlert,
   at: number,
+  maxRows: number,
 ): JSX.Element {
   const rule = alertRule(shown)
   const confirming = held.confirmFalseAlarm === true
+  const isInstruction = /^instruction "/.test(shown.reference)
+  // "Breaks rule: “…”", or the banner when no title is stored.
+  const headline =
+    rule === undefined
+      ? alertBanner(shown)
+      : `Breaks ${isInstruction ? 'instruction' : 'rule'}: \u201c${rule.words}\u201d`
   const part = (key: string, label: string, body: string, quiet?: true) => (
     <Text key={key} dimColor={quiet}>
       <Text dimColor>{label}: </Text>
@@ -1006,68 +1028,95 @@ function alertCard(
     </Text>
   )
 
+  // Closed, the sentence keeps to three lines; Details shows it whole.
+  const doing = (
+    <Text key="doing" maxLines={held.showDetails ? undefined : 3}>
+      {shown.alert}
+    </Text>
+  )
+  // In a short band the buttons come right under the headline, so they
+  // stay in view; the sentence follows them.
+  const tight = maxRows < CARD_ROWS
+
   return (
     <Box
       flexDirection="column"
       borderStyle="round"
       borderColor="warning"
+      backgroundColor="surface-0"
       padding="md"
       gap="sm"
-      marginY="sm"
     >
-      <Box flexDirection="row" alignItems="center" gap="xs">
-        <Svg source={WARNING_MARK} alt="Warning" width={16} height={16} />
-        <Text bold>{alertBanner(shown)}</Text>
-        <Text dimColor>· Course Keeper</Text>
+      <Box flexDirection="row" alignItems="flex-start" gap="xs">
+        <Svg source={LOGO_MARK} alt="Course Keeper" width={18} height={18} />
+        <Box flexGrow={1}>
+          <Text weight="semibold">{headline}</Text>
+        </Box>
+        {/* A Button draws only text, so the close mark is a character. It
+            has no label: the app draws a Button's label in place of its
+            text, which would replace the mark with a word. */}
+        <Button
+          key="dismiss"
+          role="dismiss"
+          onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
+        >
+          {'\u2715'}
+        </Button>
       </Box>
-      {rule !== undefined && (
-        <Text>
-          <Text dimColor>{rule.label}: </Text>
-          <Text bold>"{rule.words}"</Text>
-        </Text>
-      )}
-      {/* The buttons sit under the headline and the rule, so they stay in a short band's
-          window, where their keys answer. No Button takes the focus first:
-          a stray Enter sends nothing. */}
-      <Box flexDirection="row" flexWrap="wrap" gap="xs">
+      {!tight && doing}
+      <Box flexDirection="row" flexWrap="wrap" gap="xs" alignItems="center">
         <Button
           key="tell"
           variant="primary"
-          hotkey="1"
           label="Tell the agent"
           onPress={() => tell($, id, at).catch(() => undefined)}
         />
         <Button
           key="details"
-          hotkey="2"
           label={held.showDetails ? 'Hide details' : 'Details'}
-          onPress={() =>
-            change($, id, r =>
-              r.current?.shownAt === at ? { ...r, showDetails: !r.showDetails } : r,
-            ).catch(() => undefined)
-          }
+          onPress={async () => {
+            try {
+              const done = await change($, id, r =>
+                r.current?.shownAt === at ? { ...r, showDetails: !r.showDetails } : r,
+              )
+              // The parts open under the buttons; bring them into the band's
+              // view. The card is redrawn after the write, so the parts may
+              // not exist yet: try again for about a second.
+              if (done.current?.shownAt === at && done.showDetails) {
+                await retried(
+                  () => $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' }),
+                  () => $.clock.sleep(100),
+                  10,
+                  deny => /moved meanwhile/.test(deny),
+                )
+              }
+            } catch {
+              // The parts are open all the same; the person can scroll.
+            }
+          }}
         />
         <Button
           key="false-alarm"
-          hotkey="3"
           label={confirming ? 'Confirm false alarm' : 'False alarm'}
           onPress={() => falseAlarm($, id, at).catch(() => undefined)}
         />
-        <Button
-          key="dismiss"
-          hotkey="4"
-          label="Dismiss"
-          role="dismiss"
-          onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
-        />
+        <Box flexGrow={1} />
+        {/* The brand beside the wheel; the quoted rule already names the rule. */}
+        <Text size="caption" dimColor>
+          Course Keeper
+        </Text>
       </Box>
-      {part('doing', 'What your agent is doing', shown.alert)}
-      {shown.instead !== undefined &&
-        shown.instead !== '' &&
-        part('instead', 'What it should do instead', shown.instead)}
-      {shown.evidence !== '' &&
-        part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
-      {held.showDetails && part('note', 'For the agent', shown.note, true)}
+      {tight && doing}
+      {held.showDetails && (
+        <Box key="details-open" flexDirection="column" gap="sm">
+          {shown.instead !== undefined &&
+            shown.instead !== '' &&
+            part('instead', 'Instead', shown.instead)}
+          {shown.evidence !== '' &&
+            part('quote', 'Agent wrote', `\u201c${plainQuote(shown.evidence)}\u201d`, true)}
+          {part('note', 'For the agent', shown.note, true)}
+        </Box>
+      )}
     </Box>
   )
 }
@@ -1173,7 +1222,7 @@ export const register: Register = (on, options) => {
           if (e.surface !== 'terminal') {
             // The app draws the frame: a character frame sized in terminal
             // cells does not line up in a proportional font.
-            return alertCard($.ui.resolve(e), $, id, held, shown, at)
+            return alertCard($.ui.resolve(e), $, id, held, shown, at, e.props.maxRows)
           }
           const { Box, Button, Text } = $.ui.resolve(e)
           // The frame is at most MAX_ROW_WIDTH cells wide, so that long
@@ -1201,7 +1250,7 @@ export const register: Register = (on, options) => {
             frameRows(
               width,
               `── ▲ ${banner} · Course Keeper ──`,
-              rule === undefined ? undefined : `${rule.label}: "${rule.words}"`,
+              rule === undefined ? undefined : `${rule.label}: “${rule.words}”`,
               parts,
               space,
             )
@@ -1289,15 +1338,15 @@ export const register: Register = (on, options) => {
                 {rule !== undefined && (
                   <Box flexDirection="row">
                     <Text>{rule.label}: </Text>
-                    <Text bold>"{rule.words}"</Text>
+                    <Text bold>“{rule.words}”</Text>
                   </Box>
                 )}
-                {part('doing', 'What your agent is doing', shown.alert)}
+                {part('doing', 'What your agent did', shown.alert)}
                 {shown.instead !== undefined &&
                   shown.instead !== '' &&
                   part('instead', 'What it should do instead', shown.instead)}
                 {shown.evidence !== '' &&
-                  part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
+                  part('quote', 'Agent wrote', `“${plainQuote(shown.evidence)}”`, true)}
                 {held.showDetails &&
                   part('note', 'For the agent', shown.note, true)}
                 {!actionsFirst && actions}

@@ -74,6 +74,7 @@ import {
   withFinalAnswer,
   withoutDraft,
   plainQuote,
+  retried,
 } from './logic'
 
 const DEVIATION = [
@@ -459,6 +460,52 @@ describe('the quote', () => {
     expect(plainQuote('read `obj.__dict__` and `**kwargs` **now**')).toBe(
       'read obj.__dict__ and **kwargs now',
     )
+  })
+})
+
+describe('a refused call tried again', () => {
+  test('stops at the first attempt that goes through', async () => {
+    let calls = 0
+    let waits = 0
+    const ok = await retried(
+      async () => (++calls < 3 ? { deny: 'not drawn yet' } : {}),
+      async () => {
+        waits += 1
+      },
+      10,
+    )
+    expect(ok).toBe(true)
+    expect(calls).toBe(3)
+    expect(waits).toBe(2)
+  })
+
+  test('stops at once on a refusal named final', async () => {
+    let calls = 0
+    const ok = await retried(
+      async () => {
+        calls += 1
+
+        return { deny: 'the window moved meanwhile' }
+      },
+      async () => undefined,
+      10,
+      deny => /moved meanwhile/.test(deny),
+    )
+    expect(ok).toBe(false)
+    expect(calls).toBe(1)
+  })
+
+  test('gives up after the last try without a final wait', async () => {
+    let waits = 0
+    const ok = await retried(
+      async () => ({ deny: 'never' }),
+      async () => {
+        waits += 1
+      },
+      3,
+    )
+    expect(ok).toBe(false)
+    expect(waits).toBe(2)
   })
 })
 
