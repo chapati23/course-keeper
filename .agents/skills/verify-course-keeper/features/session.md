@@ -28,7 +28,7 @@ The whole recipe runs as `journeys/session`. The steps below are the same steps 
 - **Off.** Run `control send "$RUN" "/course-keeper off"`, then `control wait "$RUN" "Course Keeper checks are off for this session." --after "❯ /course-keeper off"`. Enter `/course-keeper` again. The answer holds `Checks: off for this session.`
 - **Off, stored.** Run `control store "$RUN" --save store-off`. The record holds `"isOff": true`.
 - **On.** Run `control send "$RUN" "/course-keeper on"`, then wait for `Course Keeper checks are on for this session.` Status holds `Checks: on for this session.` and `control store "$RUN"` holds `"isOff": false`.
-- **Nothing sent.** Run `control requests "$RUN"`. It prints nothing: slash commands alone start no model request.
+- **Nothing sent.** Run `control requests "$RUN"`. It prints nothing and exits 0: slash commands alone start no model request. The journey asserts an empty request log.
 - **Vision untouched.** Compare `<run>/scratch/project/VISION.md` with `<evidence>/vision.md`. They are the same.
 - **No vision.** Start a second run with `control start --no-vision`. `control doctor` passes on the status line `VISION.md: not found. No checks run without it.` `/course-keeper check` answers `Check finished: did not run: no VISION.md found.` `journeys/session` does not run this step; [the standing-instruction journey](instructions.md) asserts the status line and that a prompt there starts no plugin request.
 

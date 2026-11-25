@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Session controls: status, off, on, with the stored switch and an untouched vision.
 
-Only slash commands run, so the plugin must send no model request at all that
-carries one of its prompt markers.
+Only slash commands run, so the session must send no model request at all: the
+request log stays empty.
 """
 import json
 from pathlib import Path
@@ -10,7 +10,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib import MARKERS, expect, has, journey, step  # noqa: E402
+from lib import expect, has, journey, step  # noqa: E402
 
 
 def session(run):
@@ -38,13 +38,12 @@ def session(run):
     step("vision unchanged")
     expect(vision.read_text() == seed, "VISION.md is unchanged", seed, vision.read_text())
 
-    step("no plugin model request")
+    step("no model request")
     requests = run.requests(save="model-requests")
-    marked = [r["seq"] for r in requests
-              if any(m in r.get("last_user", "") for m in MARKERS.values())]
-    expect(not marked, "no model request carries a Course Keeper prompt marker",
-           "none", json.dumps(marked))
-    print(f"model requests while only slash commands ran: {len(requests)}")
+    expect(not requests, "slash commands alone cause no model request: the request log is empty",
+           "an empty model-requests.jsonl",
+           json.dumps([(r["seq"], r["method"], r["path"], r.get("model"), r["matched"])
+                       for r in requests]))
 
 
 if __name__ == "__main__":

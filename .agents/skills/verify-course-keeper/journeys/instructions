@@ -192,12 +192,14 @@ def noted(run, want, label, what, timeout=20, least=None):
 
 def silent_turn(run, prompt, answer, at, label, what):
     """The person types `prompt`; the agent answers; the turn's check ends with 'verdict:
-    none'. While all that runs, no added notice may show. The watch ends when the store
-    records the check, and it covers the extract reply only when the extract request was
-    logged before the check request (the endpoint answers it at once): that is asserted."""
+    none'. While all that runs, no added notice may show. The watch starts when the prompt
+    is sent and ends when the store records the check, and it covers the extract reply only
+    when the extract request was logged before the check request (the endpoint answers it at
+    once): that is asserted."""
     mark = run.last_seq()
-    ask(run, prompt, answer, label)
+    run.send(prompt)
     record, seen = wait_check(run, at, "verdict: none", "store-" + label, watch=TOAST_PREFIX)
+    run.wait("⏺ " + answer, timeout=10, after="❯ " + prompt, save=label)
     expect(not seen, what, "no toast while the turn and its check ran", seen)
     ex = extracts(run, mark)
     checks = [r for r in run.requests() if r["seq"] > mark and is_check(r)]

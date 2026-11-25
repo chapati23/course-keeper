@@ -31,7 +31,11 @@ person's profile.
   control stop RUN
 
 RUN is the run directory. start prints two lines on stdout: the first is the
-run directory (RUN), the second is its evidence directory.
+run directory (RUN), the second is its evidence directory. start writes
+evidence/run-marker.json (the run directory and its creation time) and an
+empty evidence/model-requests.jsonl. Every command refuses a directory that
+has neither a scratch/run.json that records that same directory nor that
+marker: it exits 1 with one sentence and changes nothing.
 
 A scripted reply proves how the plugin handles a reply. It does not prove that
 a real model detects a deviation.
@@ -48,19 +52,29 @@ Notes
     on the prompt text with --unless "Decide whether it states a standing
     instruction". The check rule keys on "<final_answer>" (see below).
   - wait --gone succeeds at once when the text is absent. Wait for the text
-    first, then wait for it to go.
+    first, then wait for it to go. With --after MARK, a wait (with or without
+    --gone) first needs MARK on the screen; when MARK never shows within the
+    timeout, it exits 1 and says that the mark was not found.
   - keys returns as soon as the keys are sent. Use focus to give the alert row
     the keyboard: it sends ctrl+x and Tab, waits until one row button is drawn
     in inverse video and prints that button's label. It exits 1 after 5 seconds
     without a focused button and saves the screen as evidence/focus-timeout.txt.
-  - A request that matches no rule gets the default reply "OK.". Run
-    requests --unscripted to list those requests; it exits 1 when there is one.
+  - A request that matches no rule gets the default reply "OK."; a request to
+    a path that the endpoint does not know gets {} and is logged "unknown
+    path". requests --unscripted lists both kinds and exits 1 when there is
+    one. requests exits 1 when RUN is not a run or its request log is
+    missing. A log line that is not valid JSON (the endpoint exited while it
+    wrote it) is skipped; the listing's last line names the skipped lines.
+  - reply --times N takes N of 1 or more.
   - A check reply must use the exact format at the end of prompts/check.md. The
     last user message of the check fork holds "<final_answer>", the agent's
     answer and "</final_answer>", followed by the check prompt. A --when can
     match that block.
-  - --ttl counts from the start of the model endpoint. When it expires, the run
-    stops itself and removes scratch/. Evidence stays.
+  - --ttl MINUTES (more than 0) counts from the start of the model endpoint.
+    When it expires, the run stops itself with the same teardown as stop: the
+    stop record notes that the TTL expired, and evidence/ttl-expired.txt is
+    written. scratch/ goes only when every process of the run stopped.
+    Evidence stays.
   - --no-vision starts the fixture without a vision file. doctor then requires
     the status text for a missing vision file.
   - --anti-patterns writes FILE's text as ANTI-PATTERNS.md beside VISION.md and
@@ -77,13 +91,17 @@ Notes
   - stop saves evidence/final-screen.txt and evidence/model-requests.txt first.
     It signals a recorded pid only while that pid shows the start time that
     start recorded for it; otherwise the stop record (evidence/actions.log)
-    says "not signalled" and why.
+    says "not signalled" and why. When a process of the run still runs at the
+    end, stop keeps scratch/ (a later stop retries), names the process on
+    stderr, records it under "still running" and exits 1. A stop on a stopped
+    run exits 0 and prints the evidence path.
   - press presses one drawn button and prints its label (the close button
     prints its mark). It exits 1 by name, and lists the drawn buttons, when no
-    such button is drawn; then it sends nothing. Terminal: it takes the hotkey
-    (1 to 4) or a part of the label, reads the visible pane for the row before
+    such button is drawn, and when a label part names more than one button;
+    then it sends nothing. Terminal: it takes the hotkey (1 to 4), a whole
+    label or a part of one, resolves the button from the visible pane before
     any key goes in, gives the row the keyboard as focus does, then sends the
-    hotkey.
+    hotkey. When the row changed meanwhile, it sends no hotkey and exits 1.
   - A terminal run needs a shell that may create Unix sockets (tmux). start
     says so when the shell forbids them, as a sandboxed shell does.
 
@@ -112,7 +130,11 @@ Desktop runs (--surface desktop)
     returns when the CLI took the frame (a frame names its uuid). --bare
     leaves out client_platform (a sender that is not a person). --reminder
     TEXT sends the content as the app's array form with a leading
-    <system-reminder> block.
+    <system-reminder> block. One completion signal per turn (the result
+    frame, or session_state_changed idle when no result came first) releases
+    one held frame. When the take times out, send exits 1 with "not sent: the
+    turn before it did not end" (the host dropped the held frame, so a retry
+    sends it once) or "sent, not acknowledged".
   - screen prints the transcript ("❯ " a prompt, "⏺ " an agent answer,
     "  ⎿  " a command answer, "▸ Prompt from the <name> plugin: " a plugin's
     prompt, whose text and origin the host reads from the run's own session
@@ -145,7 +167,10 @@ Desktop runs (--surface desktop)
   - Evidence adds frames.jsonl (every frame in both directions), spawn.json
     (argv, env, cwd), initialize.json, cli-debug.log, cli-stderr.log and
     host.log. stop closes the CLI's stdin first, then stops only the pids
-    that start recorded, by the rule above.
+    that start recorded, by the rule above. The host records the CLI's pid in
+    scratch/host.json right after it spawns it. When initialize fails, or the
+    host gets SIGTERM, SIGINT or SIGHUP, the host stops and reaps the CLI
+    before it exits.
 """
 import argparse
 import errno
@@ -218,12 +243,34 @@ def write_json(path, value):
     os.replace(tmp, path)
 
 
+MARKER = "run-marker.json"
+
+
+def run_state(p):
+    """"live" when scratch/run.json records this run directory, "stopped" when only the
+    evidence marker that start wrote names it, else None (not a run directory)."""
+    cfg = read_json(p["config"])
+    if isinstance(cfg, dict) and cfg.get("run") == str(p["run"]):
+        return "live"
+    marker = read_json(p["evidence"] / MARKER)
+    if isinstance(marker, dict) and marker.get("run") == str(p["run"]):
+        return "stopped"
+    return None
+
+
+def not_a_run(p):
+    return Failure(f"{p['run']} is not a run directory: it has no scratch/run.json and no "
+                   f"evidence/{MARKER} that names it, so control leaves it alone.")
+
+
 def config(run):
     p = paths(run)
-    cfg = read_json(p["config"])
-    if cfg is None:
-        raise Failure(f"No live run at {p['run']} (scratch is gone or was never made)")
-    return p, cfg
+    state = run_state(p)
+    if state is None:
+        raise not_a_run(p)
+    if state == "stopped":
+        raise Failure(f"No live run at {p['run']}: the run was stopped (scratch is gone)")
+    return p, read_json(p["config"])
 
 
 def log_action(p, kind, payload):
@@ -282,6 +329,24 @@ def signal_recorded(pid, recorded, sig=signal.SIGTERM):
     except OSError as error:  # a sandbox refuses a signal to another command's process
         return f"pid {pid} {name} refused: {error}"
     return f"pid {pid} {name}"
+
+
+def start_only(identity):
+    """An identity without its path, for a pid that execs another executable after it was
+    read: a pid keeps its start time through exec."""
+    return dict(identity, path="") if identity else identity
+
+
+def recorded_alive(pid, identity):
+    """True while pid runs the process that start recorded for it. A pid that is alive but
+    cannot be read, or has no recorded identity, counts as alive: nothing proves that it is
+    gone. A pid that now shows another start time is another process."""
+    if not pid_alive(pid):
+        return False
+    now = desk.proc_identity(pid)
+    if now is None or not identity:
+        return True
+    return desk.same_process(identity, now)
 
 
 def is_desktop(cfg):
@@ -661,20 +726,17 @@ def serve(run):
     def expire():
         while time.monotonic() < deadline:
             time.sleep(1)
+        now = read_json(p["config"])
+        if now is None:
+            os._exit(0)  # a stop already ran
+        # The same teardown as stop; the endpoint is this process and exits after it.
+        alive = teardown(p, now, note=f"the TTL of {cfg['ttl']} minutes expired",
+                         endpoint_is_self=True)
         (p["evidence"] / "ttl-expired.txt").write_text(
-            f"The run reached its TTL of {cfg['ttl']} minutes and stopped itself.\n")
-        now = read_json(p["config"], {})
-        if is_desktop(now):
-            try:  # the host closes the CLI's stdin, then exits
-                desk.call(p, now, "stop", timeout=5)
-            except desk.HostError:
-                pass
-            wait_gone(now.get("cli_pid"), 20)
-            wait_gone(now.get("host_pid"), 10)
-        else:
-            tmux(p, "kill-server")
-            wait_gone(now.get("claude_pid"), 10)
-        shutil.rmtree(p["scratch"], ignore_errors=True)
+            f"The run reached its TTL of {cfg['ttl']} minutes and stopped itself.\n"
+            + (f"Still running, so scratch/ stays: {'; '.join(alive)}\n" if alive else ""))
+        if not alive:
+            shutil.rmtree(p["scratch"], ignore_errors=True)
         os._exit(0)
 
     threading.Thread(target=expire, daemon=True).start()
@@ -750,6 +812,8 @@ def cmd_start(a):
     if not (repo / ".claude-plugin/plugin.json").is_file():
         raise Failure("Run the control CLI installed under this checkout's .agents/skills directory")
     check_surface_options(a)
+    if a.ttl <= 0:
+        raise Failure("--ttl takes a number of minutes greater than 0")
     desktop = a.surface == "desktop"
     if desktop:
         claude, source = desktop_cli(a)
@@ -774,6 +838,9 @@ def cmd_start(a):
         raise Failure(f"The tmux socket path is too long: {p['socket']}. Set TMPDIR to a short directory.")
     for key in ("scratch", "evidence", "project", "profile", "home"):
         p[key].mkdir(parents=True, exist_ok=True)
+    # The marker says that the harness made this directory; it stays with the evidence.
+    write_json(p["evidence"] / MARKER, {"run": str(run), "created": time.time()})
+    (p["evidence"] / "model-requests.jsonl").write_text("")
     if vision is not None:
         (p["project"] / "VISION.md").write_text(vision)
         (p["evidence"] / "vision.md").write_text(vision)
@@ -785,7 +852,7 @@ def cmd_start(a):
         "customApiKeyResponses": {"approved": [SYNTHETIC_KEY]},
     }))
     p["rules"].write_text("")
-    cfg = {"repo": str(repo), "claude": claude, "token": secrets.token_hex(16), "ttl": a.ttl,
+    cfg = {"run": str(run), "repo": str(repo), "claude": claude, "token": secrets.token_hex(16), "ttl": a.ttl,
            "columns": columns, "rows": rows, "started": time.time(),
            "no_vision": a.no_vision, "anti_patterns": anti_patterns is not None,
            "surface": a.surface}
@@ -823,7 +890,10 @@ def cmd_start(a):
                 raise Failure(SOCKET_REFUSED)
             raise Failure("tmux could not start its server: " + made.stderr.strip())
         ids = tmux(p, "display-message", "-p", "#{pid} #{pane_pid}", check=True).stdout.split()
-        cfg.update(tmux_pid=int(ids[0]), claude_pid=int(ids[1]))
+        cfg.update(tmux_pid=int(ids[0]), claude_pid=int(ids[1]),
+                   tmux_identity=desk.proc_identity(int(ids[0])),
+                   # The pane may still run env, which execs Claude: keep the start time only.
+                   claude_identity=start_only(desk.proc_identity(int(ids[1]))))
         write_json(p["config"], cfg)
         project = str(p["project"])
         # A fresh profile always asks; accept only for this run's own fixture.
@@ -863,17 +933,29 @@ def start_desktop(a, p, cfg):
     cfg.update(host_pid=proc.pid, host_identity=desk.proc_identity(proc.pid))
     write_json(p["config"], cfg)
     deadline = time.monotonic() + 120
-    while not read_json(p["host"]) and time.monotonic() < deadline:
+
+    def finished():
+        """host.json once the host finished its start. The host writes it first right after
+        it spawned the CLI (pid and identity, no "initialize"); stop reads the CLI pid there."""
+        h = read_json(p["host"]) or {}
+        if h.get("cli_pid") and cfg.get("cli_pid") != h["cli_pid"]:
+            cfg.update(cli_pid=h["cli_pid"], cli_identity=h.get("cli_identity"))
+            write_json(p["config"], cfg)
+        return h if "initialize" in h else None
+
+    while not finished() and time.monotonic() < deadline:
         if proc.poll() is not None:
+            if finished():
+                break  # it stopped its CLI after a failed initialize and recorded why
             raise Failure(f"The desktop host exited with {proc.returncode}; see "
                           f"{p['evidence'] / 'host.log'}")
         time.sleep(0.1)
-    started = read_json(p["host"])
+    started = finished()
     if not started:
         raise Failure("The desktop host did not finish initialize within 120s")
     # The host is the CLI's parent and read its identity itself; this shell may not.
     cfg.update(cli_pid=started["cli_pid"], cli_identity=started.get("cli_identity"),
-               host_port=started["port"])
+               host_port=started.get("port"))
     write_json(p["config"], cfg)
     if started.get("initialize") != "success":
         raise Failure(f"The CLI did not answer initialize: {started.get('error')}")
@@ -1025,8 +1107,13 @@ def send_desktop(p, cfg, text, bare=False, reminder=None):
     if "error" in took:
         raise Failure(f"send failed: {took['error']}")
     if not took.get("taken"):
-        raise Failure(f"The CLI did not take the frame within {desk.TAKE_TIMEOUT}s: no "
-                      f"command_lifecycle or status frame named its uuid {took.get('uuid')}")
+        if took.get("written") is False:
+            raise Failure(f"not sent: the turn before it did not end within {desk.TAKE_TIMEOUT}s; "
+                          f"the host dropped the held frame {took.get('uuid')}, so a retry "
+                          "sends the prompt once")
+        raise Failure(f"sent, not acknowledged: the CLI did not take the frame within "
+                      f"{desk.TAKE_TIMEOUT}s: no command_lifecycle or status frame named its "
+                      f"uuid {took.get('uuid')}")
 
 
 def cmd_send(a):
@@ -1097,22 +1184,36 @@ def cmd_press(a):
         print(out["label"])
         return
 
-    def pick(buttons):
-        key = a.which if a.which in buttons else next(
-            (k for k, label in buttons.items() if a.which.lower() in label.lower()), None)
-        if key is None:
-            raise Failure(f"No button {a.which!r} is drawn. The row's buttons: "
-                          f"{[f'{k}: {v}' for k, v in buttons.items()] or 'none (no alert row is on the visible pane)'}.")
-        return key
+    def listing(buttons):
+        return [f"{k}: {v}" for k, v in buttons.items()] or \
+            "none (no alert row is on the visible pane)"
 
-    # Read the visible pane before any key goes in: with no such button nothing is sent.
-    pick(row_buttons(capture(p, history=False)))
-    focus_row(p)
+    def refuse(message):
+        log_action(p, "press", {"which": a.which, "key": None, "refused": message})
+        raise Failure(message)
+
+    # Resolve the button from the visible pane before any key goes in: a refusal sends nothing.
     buttons = row_buttons(capture(p, history=False))
-    key = pick(buttons)
+    w = a.which.strip().lower()
+    if a.which in buttons:
+        keys = [a.which]
+    else:
+        keys = [k for k, label in buttons.items() if label.lower() == w] or \
+               [k for k, label in buttons.items() if w in label.lower()]
+    if not keys:
+        refuse(f"No button {a.which!r} is drawn. The row's buttons: {listing(buttons)}.")
+    if len(keys) > 1:
+        refuse(f"{a.which!r} names {len(keys)} buttons: {[f'{k}: {buttons[k]}' for k in keys]}. "
+               "Give more of the label.")
+    key, label = keys[0], buttons[keys[0]]
+    focus_row(p)
+    now = row_buttons(capture(p, history=False))
+    if now.get(key) != label:
+        refuse(f"The row changed while it took the focus: hotkey {key} was {label!r} and is now "
+               f"{now.get(key)!r}; no hotkey was sent. The row's buttons: {listing(now)}.")
     tmux(p, "send-keys", key, check=True)
-    log_action(p, "press", {"which": a.which, "key": key, "label": buttons[key]})
-    print(buttons[key])
+    log_action(p, "press", {"which": a.which, "key": key, "label": label})
+    print(label)
 
 
 def cmd_attach(a):
@@ -1155,12 +1256,21 @@ def cmd_wait(a):
     label = a.save or "wait"
 
     def matches(view):
+        if a.after is not None and a.after not in view:
+            return False  # --after requires the mark, with or without --gone
         found = contains(after(view, a.after), a.text)
         return not found if a.gone else found
 
     what = ("the screen to lose " if a.gone else "the screen to show ") + repr(a.text)
     read = (lambda: desktop_view(p, cfg, row=a.visible)) if is_desktop(cfg) else None
-    view = wait_screen(p, label, matches, a.timeout, what, history=not a.visible, read=read)
+    try:
+        view = wait_screen(p, label, matches, a.timeout, what, history=not a.visible, read=read)
+    except Failure as error:
+        last = p["evidence"] / (label + "-timeout.txt")
+        if a.after is not None and a.after not in (last.read_text() if last.exists() else ""):
+            raise Failure(f"Timed out after {a.timeout}s: the mark {a.after!r} was not found on "
+                          f"the screen, so {what} was not checked. Last screen: {last}") from None
+        raise error
     if a.save:
         (p["evidence"] / (a.save + ".txt")).write_text(saved_view(p, cfg, view, a.visible))
 
@@ -1170,6 +1280,8 @@ def cmd_reply(a):
     text = Path(a.file).read_text() if a.file else a.text
     if a.delay is not None and a.delay < 0:
         raise Failure("--delay takes a number of seconds of 0 or more")
+    if a.times is not None and a.times < 1:
+        raise Failure("--times takes a count of 1 or more")
     rule = {"when": a.when, "text": text, "model": a.model, "times": a.times,
             "unless": a.unless or [], "delay": a.delay}
     with open(p["rules"], "a") as f:
@@ -1180,36 +1292,63 @@ def cmd_reply(a):
 
 
 def read_requests(p):
-    try:
-        lines = (p["evidence"] / "model-requests.jsonl").read_text().splitlines()
-    except OSError:
-        return []
-    return [json.loads(line) for line in lines if line.strip()]
+    """The request log's rows, and the numbers of the lines that are not valid JSON (a line
+    that the endpoint was still writing when it exited). Raises OSError without a log."""
+    rows, skipped = [], []
+    lines = (p["evidence"] / "model-requests.jsonl").read_text().splitlines()
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            skipped.append(number)
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+        else:
+            skipped.append(number)
+    return rows, skipped
+
+
+UNSCRIPTED = ("default", "unknown path")
 
 
 def requests_text(p, unscripted=False):
-    """The request listing that `control requests` prints, and how many rows it holds
-    that matched no rule. With unscripted, only those rows are listed."""
+    """The request listing that `control requests` prints, and how many rows it holds that
+    no rule answered (matched "default" or "unknown path"). With unscripted, only those rows
+    are listed. A last line names the log lines that were skipped as not valid JSON."""
     rows = []
-    default = 0
-    for r in read_requests(p):
-        if r["matched"] == "default":
-            default += 1
+    unanswered = 0
+    found, skipped = read_requests(p)
+    for r in found:
+        if r.get("matched") in UNSCRIPTED:
+            unanswered += 1
         elif unscripted:
             continue
-        first = " ".join(r.get("last_user", "").split())[:120]
-        rows.append(f"{r['seq']}\t{r['method']} {r['path']}\t{r.get('model')}\t"
-                    f"stream={'yes' if r.get('stream') else 'no'}\t{r['matched']}\t{first}")
-    return "\n".join(rows) + ("\n" if rows else ""), default
+        first = " ".join((r.get("last_user") or "").split())[:120]
+        rows.append(f"{r.get('seq')}\t{r.get('method')} {r.get('path')}\t{r.get('model')}\t"
+                    f"stream={'yes' if r.get('stream') else 'no'}\t{r.get('matched')}\t{first}")
+    if skipped:
+        rows.append(f"skipped {len(skipped)} line{'s' if len(skipped) > 1 else ''} of "
+                    f"model-requests.jsonl that {'are' if len(skipped) > 1 else 'is'} not valid "
+                    f"JSON: line {', '.join(map(str, skipped))}")
+    return "\n".join(rows) + ("\n" if rows else ""), unanswered
 
 
 def cmd_requests(a):
     p = paths(a.run)
-    text, default = requests_text(p, a.unscripted)
+    if run_state(p) is None:
+        raise not_a_run(p)
+    log = p["evidence"] / "model-requests.jsonl"
+    try:
+        text, unanswered = requests_text(p, a.unscripted)
+    except OSError as error:
+        raise Failure(f"Cannot read the request log {log}: {error.strerror or error}") from None
     if a.save:
         (p["evidence"] / (a.save + ".txt")).write_text(text)
     sys.stdout.write(text)
-    if a.unscripted and default:
+    if a.unscripted and unanswered:
         sys.exit(1)
 
 
@@ -1228,30 +1367,66 @@ def cmd_store(a):
     sys.stdout.write(text)
 
 
-def stop(run):
-    p = paths(run)
-    cfg = read_json(p["config"])
-    if cfg is not None:
-        done = {}
-        desktop = is_desktop(cfg)
-        # Evidence first: the screen is gone once tmux closes or the host exits.
-        try:
-            (p["evidence"] / "final-screen.txt").write_text(
-                desktop_view(p, cfg) if desktop else capture(p))
-            done["final screen"] = "saved"
-        except (Failure, OSError) as error:
-            done["final screen"] = "not saved: " + str(error).split("\n")[0]
-        try:
-            (p["evidence"] / "model-requests.txt").write_text(requests_text(p)[0])
-        except OSError as error:
-            done["requests"] = "not saved: " + str(error)
-        if desktop:
-            stop_desktop(p, cfg, done)
-        else:
-            if p["socket"].exists():
-                done["tmux"] = "kill-server: " + ("ok" if tmux(p, "kill-server").returncode == 0
-                                                  else "no server")
-            done["claude"] = "exited" if wait_gone(cfg.get("claude_pid"), 10) else "still running"
+def recorded_pids(p, cfg):
+    """(name, pid, identity) of every process that start recorded for the run."""
+    if is_desktop(cfg):
+        host_json = read_json(p["host"]) or {}
+        out = [("cli", cfg.get("cli_pid") or host_json.get("cli_pid"),
+                cfg.get("cli_identity") or host_json.get("cli_identity")),
+               ("host process", cfg.get("host_pid"), cfg.get("host_identity"))]
+    else:
+        out = [("claude", cfg.get("claude_pid"), cfg.get("claude_identity")),
+               ("tmux", cfg.get("tmux_pid"), cfg.get("tmux_identity"))]
+    return out + [("endpoint", cfg.get("server_pid"), cfg.get("server_identity"))]
+
+
+def end_pid(name, pid, identity, seconds, done):
+    """Waits for a recorded pid; one that outlives the wait gets SIGTERM by the rule of
+    signal_recorded. Adds what happened to done[name]."""
+    before = done[name] + ", then " if name in done else ""
+    if pid is None:
+        done[name] = before + "never started"
+        return
+    if wait_gone(pid, seconds):
+        done[name] = before + f"pid {pid} exited"
+        return
+    sent = signal_recorded(pid, identity)
+    done[name] = before + sent
+    if not sent.startswith("not signalled") and " refused" not in sent:
+        done[name] += ", exited" if wait_gone(pid, 5) else ", STILL RUNNING"
+
+
+def teardown(p, cfg, note=None, endpoint_is_self=False):
+    """The one teardown of a live run, for stop and for the TTL: saves the final screen and
+    the request listing, stops the run's processes, writes the stop record and returns the
+    processes of the run that still run (a list of texts; empty when teardown is complete).
+    It does not touch scratch/. endpoint_is_self: the caller is the endpoint, which exits
+    after this; it is not stopped or counted."""
+    done = {} if note is None else {"note": note}
+    desktop = is_desktop(cfg)
+    # Evidence first: the screen is gone once tmux closes or the host exits.
+    try:
+        (p["evidence"] / "final-screen.txt").write_text(
+            desktop_view(p, cfg) if desktop else capture(p))
+        done["final screen"] = "saved"
+    except Exception as error:
+        done["final screen"] = "not saved: " + str(error).split("\n")[0]
+    try:
+        (p["evidence"] / "model-requests.txt").write_text(requests_text(p)[0])
+        done["requests"] = "saved"
+    except Exception as error:  # the log never stops a stop
+        done["requests"] = "not saved: " + str(error).split("\n")[0]
+    if desktop:
+        stop_desktop(p, cfg, done)
+    else:
+        if p["socket"].exists():
+            done["tmux"] = "kill-server: " + ("ok" if tmux(p, "kill-server").returncode == 0
+                                              else "no server")
+        end_pid("claude", cfg.get("claude_pid"), cfg.get("claude_identity"), 10, done)
+        end_pid("tmux", cfg.get("tmux_pid"), cfg.get("tmux_identity"), 5, done)
+    if endpoint_is_self:
+        done["endpoint"] = "runs this teardown and exits after it"
+    else:
         pid = cfg.get("server_pid")
         done["endpoint"] = "not running"
         if pid_alive(pid):
@@ -1260,13 +1435,30 @@ def stop(run):
                 done["endpoint"] = "shutdown request"
             except (OSError, ValueError, urllib.error.URLError, Failure):
                 done["endpoint"] = "shutdown request failed"
-            if not wait_gone(pid, 5):
-                sent = signal_recorded(pid, cfg.get("server_identity"))
-                done["endpoint"] += ", then " + sent
-                if not sent.startswith("not signalled"):
-                    done["endpoint"] += ", exited" if wait_gone(pid, 5) else ", STILL RUNNING"
-        log_action(p, "stop", done)
-    if p["scratch"].exists():
+            end_pid("endpoint", pid, cfg.get("server_identity"), 5, done)
+    alive = [f"{name} pid {pid}" for name, pid, identity in recorded_pids(p, cfg)
+             if pid and not (endpoint_is_self and name == "endpoint")
+             and recorded_alive(pid, identity)]
+    if alive:
+        done["still running"] = alive
+        done["scratch"] = "kept, so that a later stop can retry"
+    log_action(p, "stop", done)
+    return alive
+
+
+def stop(run):
+    """Tears a live run down and removes scratch/. Refuses a directory that is not a run.
+    Raises Failure, and keeps scratch/, when a process of the run still runs."""
+    p = paths(run)
+    state = run_state(p)
+    if state is None:
+        raise not_a_run(p)
+    if state == "live":
+        alive = teardown(p, read_json(p["config"]))
+        if alive:
+            raise Failure(f"stop is incomplete: still running: {'; '.join(alive)}. scratch/ "
+                          f"stays, so that a later stop can retry. Stop record: "
+                          f"{p['evidence'] / 'actions.log'}")
         shutil.rmtree(p["scratch"], ignore_errors=True)
     return p["evidence"]
 
@@ -1275,8 +1467,8 @@ def stop_desktop(p, cfg, done):
     """Asks the host to stop (it closes the CLI's stdin first and signals only the CLI's own
     process group), then waits for the recorded pids. A recorded pid that outlives that gets
     SIGTERM only when it still shows the start time that start recorded for it (see
-    signal_recorded); nothing else is signalled."""
-    host_pid, cli_pid = cfg.get("host_pid"), cfg.get("cli_pid")
+    signal_recorded); nothing else is signalled. The CLI pid comes from scratch/run.json, or
+    from scratch/host.json when start did not get to copy it."""
     cli_exit = None
     try:
         cli_exit = desk.call(p, cfg, "health", timeout=5).get("cli_exit")
@@ -1287,21 +1479,10 @@ def stop_desktop(p, cfg, done):
         done["host"] = "stop request (the host closes the CLI's stdin first)"
     except desk.HostError as error:
         done["host"] = "no answer to the stop request: " + str(error)
-    for name, pid, seconds, identity in (("cli", cli_pid, 20, cfg.get("cli_identity")),
-                                         ("host process", host_pid, 10,
-                                          cfg.get("host_identity"))):
-        if pid is None:
-            done[name] = "never started"
-            continue
-        if wait_gone(pid, seconds):
-            done[name] = f"pid {pid} exited"
-            if name == "cli" and cli_exit is not None:
-                done[name] += f" (it had exited with code {cli_exit} before stop)"
-            continue
-        done[name] = signal_recorded(pid, identity)
-        if done[name].startswith("not signalled"):
-            continue  # the pid is not (or not provably) the run's process: say nothing more
-        done[name] += ", exited" if wait_gone(pid, 5) else ", STILL RUNNING"
+    for (name, pid, identity), seconds in zip(recorded_pids(p, cfg)[:2], (20, 10)):
+        end_pid(name, pid, identity, seconds, done)
+        if name == "cli" and cli_exit is not None and done[name].endswith("exited"):
+            done[name] += f" (it had exited with code {cli_exit} before stop)"
 
 
 def cmd_stop(a):

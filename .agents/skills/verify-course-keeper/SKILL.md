@@ -48,7 +48,7 @@ What a run owns:
 - a terminal run: a private tmux server on its own socket (150 by 42), with Claude Code started as `--plugin-dir <this checkout> --setting-sources "" --strict-mcp-config --tools ""`;
 - a desktop run: a host process that starts the app's Claude Code in its stream-json mode, with the plugin loaded from this checkout.
 
-Runs can run at the same time. Never drive a session that `control start` did not start. Never start, quit or script the desktop app for a desktop run: the stand-in does not need it.
+Runs can run at the same time. Never drive a session that `control start` did not start. Every command refuses a directory that is not a run directory. Never start, quit or script the desktop app for a desktop run: the stand-in does not need it.
 
 Traps at launch:
 
@@ -83,10 +83,10 @@ Type what a person types, script what the model answers, and read the result. Us
 | --- | --- |
 | `control send RUN TEXT` | Enters `TEXT` as a person does: typed at the terminal prompt, or sent in the app's message format on a desktop run. Returns when the session took it. |
 | `control press RUN <button>` | Presses one drawn button of the alert and prints its label. Terminal: the hotkey `1` to `4` or a part of the label. Desktop: a part of the label, or `dismiss` for the ✕. Exits 1 and lists the drawn buttons when there is no such button. |
-| `control wait RUN TEXT [--after MARK] [--visible] [--gone] [--timeout S] [--save LABEL]` | Polls the screen for `TEXT`. `--after` matches only after the last `MARK`. `--visible` (terminal) reads the visible pane only; `--row` (desktop) reads the alert only. |
+| `control wait RUN TEXT [--after MARK] [--visible] [--gone] [--timeout S] [--save LABEL]` | Polls the screen for `TEXT`. `--after` matches only after the last `MARK`, and fails when `MARK` never appears. `--visible` (terminal) reads the visible pane only; `--row` (desktop) reads the alert only. |
 | `control screen RUN [--visible \| --row] [--tree] [--save LABEL]` | Prints what the person is shown. On a desktop run this is the harness's text of the transcript and of the card; `--tree` prints the raw card. |
 | `control reply RUN --when SUBSTRING (--text T \| --file F) [--model M] [--unless S] [--times N] [--delay S]` | Adds a scripted reply for model requests whose last user message holds `SUBSTRING`. Prints `rule N`. |
-| `control requests RUN [--unscripted] [--save LABEL]` | Lists the model requests the endpoint received and the rule that answered each. `--unscripted` lists only requests that no rule matched and exits 1 when there is one. |
+| `control requests RUN [--unscripted] [--save LABEL]` | Lists the model requests the endpoint received and the rule that answered each. `--unscripted` lists only requests that no rule matched, and requests to a path the endpoint does not know, and exits 1 when there is one. It also exits 1 when it cannot read the request log. |
 | `control store RUN [--save LABEL]` | Prints the plugin's stored record for the session. |
 | `control keys RUN KEY...`, `control focus RUN` | Terminal only: send tmux key names; give the row the keyboard. |
 | `control attach RUN`, `control messages RUN [--type T]` | Desktop only: attach the desktop surface after `--attach-later`; list the messages the session sent to the app, such as `ui_toast` and `ui_notify`. |
@@ -120,6 +120,7 @@ Everything lands in the evidence directory, `<system temp>/ckv-<8 hex>/evidence`
 - `model-requests.jsonl`: every request the endpoint received, with its full body, the rule that answered and the last user message; no headers, so no key;
 - screens saved with `--save`, and `launch.txt`, `doctor.txt`, `final-screen.txt`, `model-requests.txt`;
 - store snapshots saved with `control store --save`;
+- `run-marker.json`, which marks the directory as a run of this harness;
 - `vision.md`, the seed of the fixture's vision file;
 - a desktop run: `frames.jsonl` (every message between the host and Claude Code, both directions), `spawn.json` (the arguments and environment of the Claude Code process) and `cli-debug.log`.
 
@@ -133,6 +134,8 @@ Proof standards:
 - For a desktop run, state the second limit too: the run is a stand-in. It proves what the app's Claude Code returns for the desktop surface. It does not prove the app's painting, its notifications or its keyboard handling. [Alerts in the desktop app](features/desktop.md) lists what the stand-in sets up that the app does not.
 - End each proof with `control requests RUN --unscripted`. A request that got the default reply means the script, not the plugin, decided the outcome.
 - Where the feature promises to write nothing, compare the fixture's `VISION.md` with `vision.md` and list the project directory.
+
+Evidence holds absolute paths of this machine and the full body of every model request. Check it before you post it outside the machine.
 
 What the harness does not observe: network traffic of Claude Code to hosts other than its own endpoint, notification banners, mouse clicks, and anything inside the desktop app.
 
@@ -149,7 +152,9 @@ Two proofs need a real session and are outside the journeys. Both cost model usa
 
 `stop` saves the final screen and the request listing, stops the session it started (the tmux server through its own socket, or the host and its Claude Code), stops the endpoint through an authenticated request to its own port, and removes `scratch/`. It never kills by process name, and it signals a recorded pid only while that pid is still the process that `start` recorded. It keeps the evidence directory and prints its path. A second `stop` is harmless. Run `stop` after every failed attempt too.
 
-An abandoned run stops itself after its time to live (`--ttl MINUTES`, 30 by default) and removes `scratch/`.
+When a process of the run is still alive after that, `stop` exits 1, names the process and keeps `scratch/`, so that a later `stop` can try again. A journey then fails with `cleanup: every process of the run stopped`.
+
+Every run stops itself when its time to live ends (`--ttl MINUTES`, 30 by default). The time counts from `start`, not from the last action, so a run in use stops too. The run then does the same teardown as `stop` and writes `ttl-expired.txt`. For a longer hand-driven session, start with a larger `--ttl`.
 
 Evidence directories accumulate under the system temp directory as `ckv-*`. Copy what a report cites to a lasting place. Delete old ones by hand.
 

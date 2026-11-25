@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""/course-keeper learn with scripted model replies, in three runs, one after another.
+"""/course-keeper learn with scripted model replies, in four runs, one after another.
 
 Run A (the default vision). Seven turns, every check answers "verdict: none":
 turn 1 states a standing instruction, turn 2 states one that /course-keeper forget
@@ -807,10 +807,11 @@ def anti_patterns(run):
     view.shows("Draft sentence for VISION.md, as a new invariant:",
                "a sentence for an invariant that the vision does not have is offered for "
                "VISION.md as a new invariant")
-    view.lacks(CLOSING_AP, "the report names only VISION.md")
     view.shows("Test on the turn you corrected: the check alerts on invariant 2, not on "
                "invariant 3, with this sentence added. The sentence is not verified.",
                "an alert on another invariant with the sentence added does not verify it")
+    view.shows(CLOSING[-1], "the report ends with its closing notes")
+    view.lacks(CLOSING_AP, "the report names only VISION.md")
     store_has_no_draft(run, "store-ap-7-tested")
 
     step("12d malformed replies: no result for the control, the verify and the earlier turn")

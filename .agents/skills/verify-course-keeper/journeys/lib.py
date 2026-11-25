@@ -255,7 +255,15 @@ class Run:
         path = Path(self.evidence) / "model-requests.jsonl"
         if not path.exists():
             return []
-        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        rows = []
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                pass  # a line that the endpoint is still writing; the next read holds it whole
+        return rows
 
     def last_seq(self):
         rows = self.requests()
@@ -294,10 +302,27 @@ class Run:
             time.sleep(0.2)
 
     def stop(self):
+        """control stop. Returns (evidence dir, stopped, output): stopped is False when stop
+        exited non-zero (a process of the run still runs, or stop could not run)."""
         if self.dir is None:
-            return None
-        result = self.ctl("stop", self.dir, check=False)
-        return result.stdout.strip() or self.evidence
+            return None, True, ""
+        try:
+            result = self.ctl("stop", self.dir, check=False)
+        except subprocess.TimeoutExpired as error:
+            return self.evidence, False, f"control stop timed out: {error}"
+        return (result.stdout.strip() or self.evidence, result.returncode == 0,
+                (result.stdout + result.stderr).strip())
+
+
+CLEANUP = "cleanup: every process of the run stopped"
+
+
+def cleanup_failure(output):
+    return JourneyFailure(CLEANUP, "control stop exits 0", output)
+
+
+def print_failure(failure):
+    print(f"FAIL {failure.what}\nexpected: {failure.expected}\nseen: {failure.seen}", flush=True)
 
 
 def journey(fn, *start_options):
@@ -310,13 +335,15 @@ def journey(fn, *start_options):
         fn(run)
     except JourneyFailure as failure:
         status = 1
-        print(f"FAIL {failure.what}\nexpected: {failure.expected}\nseen: {failure.seen}",
-              flush=True)
+        print_failure(failure)
     except BaseException:
         status = 1
         print("FAIL the journey raised an error\n" + traceback.format_exc(), flush=True)
     finally:
-        evidence = run.stop()
+        evidence, stopped, output = run.stop()
+    if not stopped:
+        status = 1  # a journey that already failed keeps its first failure and adds this line
+        print_failure(cleanup_failure(output))
     if status:
         print(f"evidence: {evidence}")
         sys.exit(status)
@@ -336,17 +363,26 @@ def second_run(*start_options, parent=None, label="second-run", doctor=True):
     is a person's command and so marks the session as having a person.
     """
     other = Run()
+    failed = False
     try:
         other.start(*start_options)
         print("run", other.dir, flush=True)
         if doctor:
             other.doctor()
         yield other
+    except BaseException:
+        failed = True
+        raise
     finally:
-        evidence = other.stop()
+        evidence, stopped, output = other.stop()
         if parent is not None and evidence:
             Path(parent.evidence, label + "-evidence.txt").write_text(f"{evidence}\n")
         print(f"{label} evidence", evidence, flush=True)
+        if not stopped:
+            if failed:  # keep the first failure; add the cleanup line
+                print_failure(cleanup_failure(f"{label}: {output}"))
+            else:
+                raise cleanup_failure(f"{label}: {output}")
 
 
 # ---------------------------------------------------------------- turns

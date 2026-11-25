@@ -318,6 +318,7 @@ class Host:
         self.capabilities = None
         self.init_response = None
         self.running = False
+        self.ended_by = None    # "result" or "idle": the signal that ended the last turn
         self.deferred = []
         self.taken = {}         # our user frame uuid -> threading.Event
         self.ours = set()       # uuids of the user frames the host wrote
@@ -509,11 +510,13 @@ class Host:
             if sub == "status":
                 self.mark_taken(f.get("user_message_uuids") or [])
             if sub == "session_state_changed":
-                with self.lock:
-                    self.running = f.get("state") == "running"
+                if f.get("state") == "running":
+                    with self.lock:
+                        self.running = True
+                        self.ended_by = None  # a new turn: no completion seen for it yet
+                elif f.get("state") == "idle":
+                    self.turn_ended("idle")
                 self.render_wanted.set()  # isWorking flipped
-                if f.get("state") == "idle":
-                    self.flush()
             if sub == "ui_invalidate":
                 self.render_wanted.set()  # the app asks again for every mounted site
             return
@@ -537,7 +540,8 @@ class Host:
                                             "origin": f.get("origin")})
             return
         if kind == "result":
-            self.flush()
+            self.turn_ended("result")
+            self.render_wanted.set()  # isWorking may have flipped
             return
 
     def answer_cli(self, f):
@@ -643,9 +647,22 @@ class Host:
         self.write(frame)
         self.render_wanted.set()  # isWorking flipped
 
-    def flush(self):
+    def turn_ended(self, signal_name):
+        """One completion signal ends the running turn and releases at most one held prompt.
+        The CLI ends a turn with a result frame and then session_state_changed idle (observed
+        in 2.1.330). Whichever of the two comes first ends the turn; the other one for the same
+        turn is skipped, so that it cannot release a second prompt. The next "running" state
+        frame starts a new turn. A CLI that sends only one of the two works the same way."""
         with self.lock:
+            other = "idle" if signal_name == "result" else "result"
+            if self.ended_by == other:
+                self.ended_by = None  # the second signal of the turn that already ended
+                return
+            self.ended_by = signal_name
+            self.running = False
             entry = self.deferred.pop(0) if self.deferred else None
+            if entry:
+                entry["written"] = True
         if entry:
             self.write_user(entry)
 
@@ -654,13 +671,16 @@ class Host:
         once the CLI took it: a command_lifecycle or status frame names its uuid."""
         frame = self.user_frame(text, bare, reminder)
         event = threading.Event()
-        entry = {"frame": frame, "text": text, "bare": bare, "reminder": reminder}
+        entry = {"frame": frame, "text": text, "bare": bare, "reminder": reminder,
+                 "written": False}
         with self.lock:
             self.taken[frame["uuid"]] = event
             self.ours.add(frame["uuid"])
             deferred = self.running
             if deferred:
                 self.deferred.append(entry)
+            else:
+                entry["written"] = True
         if self.cli_exit is not None:
             return {"uuid": frame["uuid"], "error": self.exit_text()}
         if not deferred:
@@ -671,7 +691,17 @@ class Host:
         took = event.wait(timeout)
         if self.cli_exit is not None:
             return {"uuid": frame["uuid"], "error": self.exit_text()}
-        return {"uuid": frame["uuid"], "deferred": deferred, "taken": took}
+        if not took:
+            with self.lock:  # a held frame that was not written yet is dropped, never sent late
+                if not entry["written"] and entry in self.deferred:
+                    self.deferred.remove(entry)
+                written = entry["written"]
+            self.record("host-note", {"note": "send timed out", "uuid": frame["uuid"],
+                                      "case": "sent, not acknowledged" if written else
+                                      "not sent: the turn before it did not end; dropped"})
+            return {"uuid": frame["uuid"], "deferred": deferred, "taken": False,
+                    "written": written}
+        return {"uuid": frame["uuid"], "deferred": deferred, "taken": took, "written": True}
 
     def press(self, which):
         """ui_press as the app's main process sends a click (READ): plugin, handle, key (the
@@ -841,49 +871,94 @@ def daemon(p, cfg, synthetic_key):
                 return self.reply({"error": repr(error)}, 500)
 
     def shutdown():
-        """Closes the CLI's stdin first, as the SDK does. Only when the CLI does not exit, it
-        signals the CLI's own process group, and only while the CLI is this host's unreaped
-        child with the start time recorded at spawn: an unreaped child's pid is not reused."""
+        """Closes the CLI's stdin first, as the SDK does, then stops the CLI as stop_child
+        says."""
         time.sleep(0.1)
-        try:
-            host.proc.stdin.close()
-        except Exception:
-            pass
-        how = "exited after its stdin closed"
-        for sig, name in ((signal.SIGTERM, "SIGTERM"), (signal.SIGKILL, "SIGKILL")):
-            try:
-                host.proc.wait(8 if sig == signal.SIGTERM else 5)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            if not same_process(host.cli_identity, proc_identity(host.proc.pid)):
-                how = (f"not signalled: pid {host.proc.pid} no longer shows the start time "
-                       "recorded at spawn")
-                break
-            how = f"{name} to its own process group"
-            os.killpg(host.proc.pid, sig)
-        else:
-            try:
-                host.proc.wait(5)
-            except subprocess.TimeoutExpired:
-                how += ", STILL RUNNING"
+        how = stop_child(host)
         host.record("host-note", {"note": "stopped", "cli": how, "code": host.proc.poll()})
         os._exit(0)
 
+    def on_signal(signum, _frame):
+        """A signal to the host (stop's fallback, or an interrupted start) stops the CLI
+        first: the CLI runs in its own process group, so nothing else would."""
+        how = stop_child(host, waits=(1, 2, 1)) if host.proc else "never spawned"
+        host.record("host-note", {"note": f"host got {signal.Signals(signum).name}",
+                                  "cli": how})
+        os._exit(1)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, on_signal)
+
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
-    host.spawn()
-    init = host.initialize()
-    # After initialize the env launcher has exec'd the CLI, so the path is the CLI's.
-    host.cli_identity = proc_identity(host.proc.pid) if host.cli_exit is None else None
-    if not cfg.get("attach_later") and host.serves_ui() and host.cli_exit is None:
-        host.attach()
-    write_json(p["host"], {"port": server.server_address[1], "pid": os.getpid(),
-                           "identity": proc_identity(os.getpid()),
-                           "cli_pid": host.proc.pid, "cli_identity": host.cli_identity,
-                           "cli_exit": host.cli_exit, "initialize": init.get("subtype"),
-                           "error": init.get("error")})
+    me = {"pid": os.getpid(), "identity": proc_identity(os.getpid())}
+    try:
+        host.spawn()
+        # Record the child before any protocol reply, so that stop finds it whatever happens
+        # next. The env launcher may not have exec'd the CLI yet: keep the start time only.
+        early = proc_identity(host.proc.pid)
+        host.cli_identity = dict(early, path="") if early else None
+        write_json(p["host"], {**me, "cli_pid": host.proc.pid, "cli_identity": host.cli_identity})
+        init = host.initialize()
+        if init.get("subtype") != "success":
+            # A failed start: stop and reap the CLI here, record why, and exit.
+            how = stop_child(host)
+            host.record("host-note", {"note": "initialize failed; the host stopped its CLI",
+                                      "cli": how, "code": host.proc.poll()})
+            write_json(p["host"], {**me, "cli_pid": host.proc.pid,
+                                   "cli_identity": host.cli_identity, "cli_exit": host.cli_exit,
+                                   "cli_stopped": how, "initialize": init.get("subtype"),
+                                   "error": init.get("error")})
+            os._exit(1)
+        # After initialize the env launcher has exec'd the CLI, so the path is the CLI's.
+        if host.cli_exit is None:
+            host.cli_identity = proc_identity(host.proc.pid) or host.cli_identity
+        if not cfg.get("attach_later") and host.serves_ui() and host.cli_exit is None:
+            host.attach()
+        write_json(p["host"], {**me, "port": server.server_address[1],
+                               "cli_pid": host.proc.pid, "cli_identity": host.cli_identity,
+                               "cli_exit": host.cli_exit, "initialize": init.get("subtype"),
+                               "error": init.get("error")})
+    except BaseException as error:
+        how = stop_child(host) if host.proc else "never spawned"
+        host.record("host-note", {"note": f"start failed: {error!r}; the host stopped its CLI",
+                                  "cli": how})
+        raise
     server.serve_forever()
+
+
+def stop_child(host, waits=(8, 5, 5)):
+    """Closes the CLI's stdin. Only when the CLI does not exit, it signals the CLI's own
+    process group (SIGTERM, then SIGKILL), and only while the CLI is this host's unreaped
+    child with the start time recorded at spawn: an unreaped child's pid is not reused.
+    Reaps the CLI and returns what happened."""
+    try:
+        host.proc.stdin.close()
+    except Exception:
+        pass
+    how = "exited after its stdin closed"
+    for (sig, name), wait in zip(((signal.SIGTERM, "SIGTERM"), (signal.SIGKILL, "SIGKILL")),
+                                 waits):
+        try:
+            host.proc.wait(wait)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        if not same_process(host.cli_identity, proc_identity(host.proc.pid)):
+            how = (f"not signalled: pid {host.proc.pid} no longer shows the start time "
+                   "recorded at spawn")
+            break
+        how = f"{name} to its own process group"
+        try:
+            os.killpg(host.proc.pid, sig)
+        except OSError as error:
+            how += f" refused: {error}"
+    else:
+        try:
+            host.proc.wait(waits[2])
+        except subprocess.TimeoutExpired:
+            how += ", STILL RUNNING"
+    return how
 
 
 # ---------------------------------------------------------------- the client
@@ -894,7 +969,9 @@ def call(p, cfg, cmd, payload=None, timeout=30):
         h = json.loads(Path(p["host"]).read_text())
     except (OSError, ValueError):
         raise HostError(f"No desktop host recorded its port in {p['host']}") from None
-    req = urllib.request.Request(f"http://127.0.0.1:{h['port']}/{cmd}", method="POST",
+    if not h.get("port"):
+        raise HostError(f"The desktop host has not finished its start (no port in {p['host']})")
+    req =urllib.request.Request(f"http://127.0.0.1:{h['port']}/{cmd}", method="POST",
                                  data=json.dumps(payload or {}).encode(),
                                  headers={"X-Run-Token": cfg["token"]})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
