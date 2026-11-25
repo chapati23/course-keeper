@@ -48,7 +48,7 @@ Without `VISION.md`, Course Keeper does nothing in that project.
 ## How it works
 
 1. After each turn of the agent, Course Keeper asks the session's own model one question: did this turn break a rule in `VISION.md`, or an instruction you gave in this session?
-2. If it did, the alert appears. Press `1` to tell the agent, `2` for details, `3` for a false alarm or `4` to dismiss.
+2. If it did, the alert appears. In the terminal, press `1` to tell the agent, `2` for details, `3` for a false alarm or `4` to dismiss; in the desktop app, click the button.
 
 ![A message from the course-keeper plugin carries the alert's note to the agent, and the agent answers that rounding in the exporter would break invariant 1 and that it will round in the money module.](docs/images/tell-the-agent.png)
 

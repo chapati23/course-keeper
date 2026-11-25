@@ -296,9 +296,9 @@ const ROW = [
 
 /** The same alert as a surface that draws its own controls shows it: a card. */
 const CARD = [
-  'Breaks your rule “One service sets every price”Invariant 1 · Course KeeperDismiss',
+  'Breaks your rule “One service sets every price”✕',
   'The session adds a price table to the client, which contradicts invariant 1.',
-  'Tell the agentDetailsFalse alarm',
+  'Tell the agentDetailsFalse alarmInvariant 1 · Course Keeper',
 ]
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -552,11 +552,14 @@ test('on desktop the card fits the band, opens Details under the buttons, takes 
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   // By default: the headline, one sentence and the buttons, nothing more.
   expect(await rowLines(ui)).toEqual(CARD)
+  // Closed, a long sentence keeps to three lines.
+  expect((await ui.find({ type: 'Text', text: /^The session adds/ }))?.props.maxLines).toBe(3)
   await ui.press({ key: 'details' })
+  expect((await ui.find({ type: 'Text', text: /^The session adds/ }))?.props.maxLines).toBeUndefined()
   const lines = await rowLines(ui)
   // The buttons hold their place; the parts open under them.
   expect(lines.slice(0, 2)).toEqual(CARD.slice(0, 2))
-  expect(lines[2]).toBe('Tell the agentHide detailsFalse alarm')
+  expect(lines[2]).toBe('Tell the agentHide detailsFalse alarmInvariant 1 · Course Keeper')
   expect(lines.slice(3, 5)).toEqual([
     'Instead: Move the table into the price service.',
     // The quote reads as the transcript shows it, without Markdown marks.
@@ -570,6 +573,10 @@ test('on desktop the card fits the band, opens Details under the buttons, takes 
   expect(tell?.props.autoFocus).toBeUndefined()
   expect(tell?.props.hotkey).toBeUndefined()
   expect((await ui.find({ key: 'dismiss' }))?.props.role).toBe('dismiss')
+  // The close mark in the corner dismisses the alert.
+  await ui.press({ key: 'dismiss' })
+  await settle(clock)
+  expect(await rowLines(ui)).toEqual([])
   await ui.unmount()
 })
 
@@ -627,7 +634,11 @@ test('an alert stored before alerts kept a title still draws, without a title', 
     expect(await rowLines(ui)).toEqual(
       surface === 'terminal'
         ? [ROW[0], ROW[1], ...ROW.slice(3)]
-        : ['Session breaks invariant 1Course KeeperDismiss', ...CARD.slice(1)],
+        : [
+            'Session breaks invariant 1✕',
+            CARD[1],
+            'Tell the agentDetailsFalse alarmCourse Keeper',
+          ],
     )
     await ui.unmount()
   }

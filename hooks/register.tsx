@@ -979,17 +979,18 @@ async function tell($: $, id: string, shownAt: number) {
   $.ui.toast('Course Keeper could not send the note to the agent. The alert is shown again.')
 }
 
-/** The amber warning mark of the card, drawn by the app rather than a glyph. */
-const WARNING_MARK =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 1.5 15 14.5H1z" fill="#D97706"/><path d="M8 6v4.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="12.2" r=".9" fill="#fff"/></svg>'
+/** The Course Keeper wheel, as in docs/icon.svg with rounded corners: the card's mark. */
+const LOGO_MARK =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" ><rect width="1024" height="1024" rx="230" fill="#0F3B36"/><g transform="translate(512 512) scale(1.22)" fill="#F4F0E6"><circle r="188" fill="none" stroke="#F4F0E6" stroke-width="60"/><circle r="82"/><g transform="rotate(0)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(45)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(90)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(135)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(180)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(225)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(270)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(315)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g></g></svg>'
 
 /**
  * The alert on a surface that draws its own controls (the desktop app, VS
  * Code, a phone): a compact card that fits the band. One strong line names
- * the rule the session breaks, a small line the reference and the plugin, one
- * sentence says what the agent did, then the buttons. Details opens what the
- * agent should do instead, its words and the note under the buttons, and
- * brings them into view. Dismiss is the surface's own close control.
+ * the rule the session breaks, after the Course Keeper wheel and before a
+ * close button; one sentence says what the agent did; then the buttons, with
+ * the reference and the plugin's name small at the row's end. Details opens
+ * what the agent should do instead, its words and the note under the
+ * buttons, and brings them into view.
  *
  * No number keys: in the app they answer only after a click on the card,
  * and a click on the button does it in one step. No Button takes the focus
@@ -1032,22 +1033,26 @@ function alertCard(
       gap="sm"
     >
       <Box flexDirection="row" alignItems="flex-start" gap="xs">
-        <Svg source={WARNING_MARK} alt="Warning" width={16} height={16} />
-        <Box flexDirection="column" flexGrow={1}>
+        <Svg source={LOGO_MARK} alt="Course Keeper" width={18} height={18} />
+        <Box flexGrow={1}>
           <Text weight="semibold">{headline}</Text>
-          <Text size="caption" dimColor>
-            {reference}
-          </Text>
         </Box>
+        {/* A Button draws only text, so the close mark is a character; the
+            label names it for a screen reader. */}
         <Button
           key="dismiss"
-          label="Dismiss"
           role="dismiss"
           onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
-        />
+        >
+          {'\u2715'}
+        </Button>
       </Box>
-      <Text key="doing">{shown.alert}</Text>
-      <Box flexDirection="row" flexWrap="wrap" gap="xs">
+      {/* Closed, the sentence keeps to three lines, so a long one cannot push
+          the buttons out of a short band; Details shows it whole. */}
+      <Text key="doing" maxLines={held.showDetails ? undefined : 3}>
+        {shown.alert}
+      </Text>
+      <Box flexDirection="row" flexWrap="wrap" gap="xs" alignItems="center">
         <Button
           key="tell"
           variant="primary"
@@ -1062,9 +1067,15 @@ function alertCard(
               const done = await change($, id, r =>
                 r.current?.shownAt === at ? { ...r, showDetails: !r.showDetails } : r,
               )
-              // The parts open under the buttons; bring them into the band's view.
+              // The parts open under the buttons; bring them into the band's
+              // view. The card is redrawn after the write, so the parts may
+              // not exist yet: try again for about a second.
               if (done.current?.shownAt === at && done.showDetails) {
-                await $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' })
+                for (let tries = 0; tries < 10; tries += 1) {
+                  const moved = await $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' })
+                  if (moved.deny === undefined) break
+                  await $.clock.sleep(100)
+                }
               }
             } catch {
               // The parts are open all the same; the person can scroll.
@@ -1076,6 +1087,10 @@ function alertCard(
           label={confirming ? 'Confirm false alarm' : 'False alarm'}
           onPress={() => falseAlarm($, id, at).catch(() => undefined)}
         />
+        <Box flexGrow={1} />
+        <Text size="caption" dimColor>
+          {reference}
+        </Text>
       </Box>
       {held.showDetails && (
         <Box key="details-open" flexDirection="column" gap="sm">
