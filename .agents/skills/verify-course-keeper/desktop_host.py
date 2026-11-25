@@ -26,6 +26,7 @@ import re
 import secrets
 import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -114,18 +115,42 @@ class _BsdInfo(ctypes.Structure):
                 ("pbi_start_tvsec", ctypes.c_uint64), ("pbi_start_tvusec", ctypes.c_uint64)]
 
 
+def linux_identity(pid, root="/proc"):
+    """proc_identity on Linux: the start time is field 22 of <root>/<pid>/stat (clock ticks
+    since boot), and the path is the target of <root>/<pid>/exe."""
+    try:
+        stat = Path(root, str(int(pid)), "stat").read_text()
+    except (OSError, ValueError):
+        return None
+    # The command name sits in parentheses and may hold spaces or ")": the numbered fields
+    # start after the last ")". Field 22 of the line is the 20th of those.
+    fields = stat[stat.rfind(")") + 1:].split()
+    if len(fields) < 20:
+        return None
+    try:
+        path = os.readlink(os.path.join(root, str(int(pid)), "exe"))
+    except OSError:
+        path = ""
+    return {"start": fields[19], "path": path}
+
+
 def proc_identity(pid):
-    """{"start": "<seconds>.<microseconds>", "path": executable} of a live pid, read through
-    libproc (no subprocess, so it works where `ps` is refused), or None when the pid does not
-    exist or this shell may not read it. A sandboxed shell reads only the processes that the
-    same command started. A pid and its start time name one process: a reused pid has a later
-    start time."""
+    """{"start": <start time>, "path": executable} of a live pid, or None when the pid does
+    not exist or this shell may not read it. macOS: read through libproc (no subprocess, so
+    it works where `ps` is refused), start as "<seconds>.<microseconds>". Linux: read from
+    /proc, start in clock ticks since boot. A sandboxed shell reads only the processes that
+    the same command started. A pid and its start time name one process: a reused pid has a
+    later start time."""
     if not pid:
         return None
+    if sys.platform.startswith("linux"):
+        return linux_identity(pid)
     try:
         lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib")
     except OSError:
         return None
+    if not hasattr(lib, "proc_pidinfo"):
+        return None  # a platform without libproc's process info
     info = _BsdInfo()
     size = lib.proc_pidinfo(int(pid), 3, ctypes.c_uint64(0), ctypes.byref(info),
                             ctypes.sizeof(info))

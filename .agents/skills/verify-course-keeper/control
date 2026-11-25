@@ -420,8 +420,14 @@ def flat(text):
     return " ".join(text.split())
 
 
+def squeeze(text):
+    return "".join(text.split())
+
+
 def contains(view, text):
-    return text in view or flat(text) in flat(view)
+    """True when the view holds the text. A narrow pane wraps a long word such as a path in
+    the middle, so the last comparison ignores all whitespace."""
+    return text in view or flat(text) in flat(view) or squeeze(text) in squeeze(view)
 
 
 def after(view, mark):
@@ -495,12 +501,30 @@ def inverse_runs(line):
     return runs
 
 
+def plain(line):
+    return OTHER_ESCAPE.sub("", SGR.sub("", line))
+
+
+def action_lines(view):
+    """The pane lines that hold the row's buttons: the last line with "Tell the agent" and
+    the lines under it that continue the buttons. A narrow pane wraps the button line
+    (flexWrap in the plugin), so later buttons start a following line."""
+    lines = view.split("\n")
+    at = max((i for i, line in enumerate(lines) if "Tell the agent" in plain(line)), default=None)
+    if at is None:
+        return []
+    found = [lines[at]]
+    for line in lines[at + 1:at + 4]:
+        if not re.match(r"^\s*(·\s*)?[1-4]: \S", plain(line)):
+            break
+        found.append(line)
+    return found
+
+
 def row_buttons(view):
-    """{hotkey: label} of the row buttons on the last pane line that holds "Tell the agent"."""
-    lines = [line for line in view.split("\n") if "Tell the agent" in line]
-    if not lines:
-        return {}
-    return dict(re.findall(r"(?:^|\s)([1-4]): (.+?)(?=\s+·\s|\s*$)", lines[-1]))
+    """{hotkey: label} of the row buttons on the visible pane, across wrapped button lines."""
+    text = " ".join(plain(line).strip() for line in action_lines(view))
+    return dict(re.findall(r"(?:^|\s)([1-4]): (.+?)(?=\s+·(?:\s|$)|\s*$)", text))
 
 
 def host(p, cfg, cmd, payload=None, timeout=30):
@@ -529,12 +553,10 @@ def saved_view(p, cfg, view, row):
 
 def focused_button(view):
     """The label of the row button that is drawn in inverse video, or None."""
-    lines = [line for line in view.split("\n") if "Tell the agent" in line]
-    if not lines:
-        return None
-    for text in inverse_runs(lines[-1]):
-        if ROW_BUTTON.match(text.strip()):
-            return text.strip()
+    for line in action_lines(view):
+        for text in inverse_runs(line):
+            if ROW_BUTTON.match(text.strip()):
+                return text.strip()
     return None
 
 
@@ -897,7 +919,7 @@ def cmd_start(a):
         write_json(p["config"], cfg)
         project = str(p["project"])
         # A fresh profile always asks; accept only for this run's own fixture.
-        wait_screen(p, "trust", lambda v: project in v and "❯ No, exit" in v
+        wait_screen(p, "trust", lambda v: squeeze(project) in squeeze(v) and "❯ No, exit" in v
                     and "Yes, I trust this folder" in v, 30,
                     "the workspace trust prompt for the fixture")
         time.sleep(0.8)
