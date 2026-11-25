@@ -18,6 +18,8 @@ claude plugin install course-keeper --marketplace chapati23/course-keeper
 
 Answer `y` to add the marketplace, then choose a scope. Update with `claude plugin update course-keeper`, then run `/reload-plugins` or start a new session.
 
+In the Code tab of the Claude desktop app: click **Plugins** (or **Customize**) in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**. Enter `chapati23/course-keeper` and click **Sync**. Then click **+** next to the prompt box and choose **Add plugins**; if the menu shows **Plugins** instead, choose **Plugins** › **Browse plugins**, or **Manage plugins** when **Browse plugins** is missing. Select Course Keeper and choose a scope. The terminal and the desktop app's local sessions read the same settings files: at user scope a plugin installed in one is on in the other for every project, and at project or local scope for that repository only ([plugin install docs](https://code.claude.com/docs/en/plugins/install#choose-an-install-scope)). The desktop app runs its own copy of Claude Code; `/status` in a session shows its version.
+
 ## Settings
 
 Course Keeper has two settings. Claude Code asks for them when you install the plugin. To change them later, use the plugin's rows in the `/config` menu.
@@ -33,7 +35,7 @@ Each value is a path relative to the place where Course Keeper looks for the vis
 
 ## What you see
 
-When a check finds a deviation, a row above the prompt shows it, as in [the screenshot in the README](../README.md).
+When a check finds a deviation, a row above the prompt shows it, as in [the screenshots in the README](../README.md).
 
 The top rule names the invariant, or says that the session breaks your instruction. The next line quotes the invariant's title, or the words of the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it; without a title the line is left out. Each part below starts with its heading in bold. The parts give what the agent did, what the invariant or the instruction asks for instead, and the evidence: what the agent wrote, in quotation marks. The "instead" part is left out when the check gave no such text. An empty line separates the frame from the transcript above and the prompt below. The frame is at most 100 columns wide. When it would not fit the space above the prompt, it drops its empty lines; when it still does not fit, the buttons move into its first line. Either way the buttons stay in view, and their keys work. The quote drops the agent's Markdown marks (`**`, `_`, backticks), so it reads as the transcript shows it.
 
@@ -77,6 +79,7 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 
 - The plugin API of Claude Code is early access and can change between releases. The plugin needs Claude Code 2.1.323 or later.
 - VS Code has no row above the prompt. There, and on any surface without the row, an alert still exists: `/course-keeper` shows it.
+- In the desktop app, a plugin you install on your computer for yourself (user or local scope) does not reach cloud sessions, and no plugin runs in WSL sessions.
 - Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents. A session counts as having a person once a prompt arrives from the terminal prompt, from Remote Control, or from its owner in Slack.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
 - The learn step tests a sentence only on excerpts of this session: the turn you corrected and up to 3 earlier turns. An alert in the test does not prove that the sentence names the right act. Whether an agent that reads the sentence avoids the act is not measured.
