@@ -18,7 +18,7 @@ claude plugin install course-keeper --marketplace chapati23/course-keeper
 
 Answer `y` to add the marketplace, then choose a scope. Update with `claude plugin update course-keeper`, then run `/reload-plugins` or start a new session.
 
-In the Code tab of the Claude desktop app: click **Plugins** in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**. Enter `chapati23/course-keeper` and click **Sync**. Then click **+** next to the prompt box and choose **Add plugins**; if the menu shows **Plugins** instead, choose **Plugins** › **Browse plugins**, or **Manage plugins** when **Browse plugins** is missing. Select Course Keeper and choose a scope. The terminal and the desktop app's local sessions read the same settings files: at user scope a plugin installed in one is on in the other for every project, and at project or local scope for that repository only ([plugin install docs](https://code.claude.com/docs/en/plugins/install#choose-an-install-scope)). The desktop app runs its own copy of Claude Code; `/status` in a session shows its version.
+In the Code tab of the Claude desktop app: click **Plugins** (or **Customize**) in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**. Enter `chapati23/course-keeper` and click **Sync**. Then click **+** next to the prompt box and choose **Add plugins**; if the menu shows **Plugins** instead, choose **Plugins** › **Browse plugins**, or **Manage plugins** when **Browse plugins** is missing. Select Course Keeper and choose a scope. The terminal and the desktop app's local sessions read the same settings files: at user scope a plugin installed in one is on in the other for every project, and at project or local scope for that repository only ([plugin install docs](https://code.claude.com/docs/en/plugins/install#choose-an-install-scope)). The desktop app runs its own copy of Claude Code; `/status` in a session shows its version.
 
 ## Settings
 
@@ -79,7 +79,7 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 
 - The plugin API of Claude Code is early access and can change between releases. The plugin needs Claude Code 2.1.323 or later.
 - VS Code has no row above the prompt. There, and on any surface without the row, an alert still exists: `/course-keeper` shows it.
-- In the desktop app, plugins from your computer do not reach cloud sessions or WSL sessions, so Course Keeper does not run there.
+- In the desktop app, a plugin you install on your computer for yourself (user or local scope) does not reach cloud sessions, and no plugin runs in WSL sessions.
 - Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents. A session counts as having a person once a prompt arrives from the terminal prompt, from Remote Control, or from its owner in Slack.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
 - The learn step tests a sentence only on excerpts of this session: the turn you corrected and up to 3 earlier turns. An alert in the test does not prove that the sentence names the right act. Whether an agent that reads the sentence avoids the act is not measured.

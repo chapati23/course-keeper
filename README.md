@@ -4,7 +4,7 @@
 
 You wrote down how your project works. One module handles money. The tool never sends an invoice. Three hours into a session, your agent takes a shortcut that breaks one of those rules, and you find it in review the next day.
 
-**Course Keeper checks every turn of a Claude Code session against your project's rules, in the terminal and in the Claude desktop app.** When the agent breaks one, an alert appears above the prompt at that turn. It names the rule, says what the agent is doing and what it should do instead, and quotes the agent. One click or key sends that note to the agent.
+**Course Keeper checks every turn of a Claude Code session against your project's rules, in the terminal and in the Claude desktop app.** When the agent breaks one, an alert appears above the prompt at that turn. It names the rule and says what the agent is doing. It also says what the agent should do instead and quotes the agent; in the desktop app, **Details** shows those two parts. One click or key sends that note to the agent.
 
 <p align="center">
   <picture>
@@ -31,7 +31,7 @@ You need Claude Code 2.1.323 or later. Check with `claude --version` in a shell,
 
    **In the desktop app**, in the **Code** tab:
 
-   1. Click **Plugins** in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**.
+   1. Click **Plugins** (or **Customize**) in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**.
    2. Enter `chapati23/course-keeper` and click **Sync**.
    3. Click **+** next to the prompt box, then **Add plugins**. If the menu shows **Plugins** instead, choose **Plugins** › **Browse plugins**, or **Manage plugins** when **Browse plugins** is missing. Select Course Keeper and choose a scope.
 
@@ -61,7 +61,7 @@ Without `VISION.md`, Course Keeper does nothing in that project.
 ## How it works
 
 1. After each turn of the agent, Course Keeper asks the session's own model one question: did this turn break a rule in `VISION.md`, or an instruction you gave in this session?
-2. If it did, the alert appears above the prompt. In the desktop app, it is a card: click **Tell the agent**, **Details** or **False alarm**, or ✕ to dismiss it. In the terminal, it is a framed row: press `1` to tell the agent, `2` for details, `3` for a false alarm or `4` to dismiss.
+2. If it did, the alert appears above the prompt. In the desktop app, it is a card: click **Tell the agent**, **Details** or **False alarm** (twice, to confirm), or ✕ to dismiss it. In the terminal, it is a framed row: press `1` to tell the agent, `2` for details, `3` twice for a false alarm or `4` to dismiss.
 
 ![A Claude Code session in the terminal. The agent proposes to round invoice totals in the exporter. Below its answer, a framed Course Keeper alert says that the session breaks invariant 1, "One module computes every amount", states what the agent is doing and what it should do instead, quotes the agent, and offers four buttons: Tell the agent, Details, False alarm and Dismiss.](docs/images/alert.png)
 
@@ -111,7 +111,7 @@ The commands work the same in the terminal and in the desktop app.
 
 - The plugin API of Claude Code is early access and can change between releases.
 - VS Code has no row above the prompt. There, `/course-keeper` shows the alerts.
-- In the desktop app, plugins from your computer do not reach cloud sessions or WSL sessions, so Course Keeper does not run there.
+- In the desktop app, a plugin you install on your computer for yourself (user or local scope) does not reach cloud sessions, and no plugin runs in WSL sessions.
 - Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide. In a test on 2026-11-25, it ran twice on each of 8 turns that had been judged sound and raised no false alert ([details](docs/writing-rules.md#false-alerts)).
 
@@ -119,7 +119,7 @@ The commands work the same in the terminal and in the desktop app.
 
 - Checks for one session: `/course-keeper off`.
 - Everything for a project: remove or rename `VISION.md`.
-- Everything everywhere: `claude plugin disable course-keeper`, or `claude plugin uninstall course-keeper`. In the desktop app, use **Plugins** in the sidebar.
+- Everything everywhere: `claude plugin disable course-keeper`, or `claude plugin uninstall course-keeper`. In the desktop app, use **Plugins** (or **Customize**) in the sidebar.
 
 ## Feedback
 
