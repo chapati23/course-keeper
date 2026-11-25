@@ -298,7 +298,7 @@ const ROW = [
 const CARD = [
   'Breaks rule: “One service sets every price”✕',
   'The session adds a price table to the client, which contradicts invariant 1.',
-  'Tell the agentDetailsFalse alarmInvariant 1 · Course Keeper',
+  'Tell the agentDetailsFalse alarmCourse Keeper',
 ]
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -563,7 +563,7 @@ test('on desktop the card fits the band, opens Details under the buttons, takes 
   const lines = await rowLines(ui)
   // The buttons hold their place; the parts open under them.
   expect(lines.slice(0, 2)).toEqual(CARD.slice(0, 2))
-  expect(lines[2]).toBe('Tell the agentHide detailsFalse alarmInvariant 1 · Course Keeper')
+  expect(lines[2]).toBe('Tell the agentHide detailsFalse alarmCourse Keeper')
   expect(lines.slice(3, 5)).toEqual([
     'Instead: Move the table into the price service.',
     // The quote reads as the transcript shows it, without Markdown marks.

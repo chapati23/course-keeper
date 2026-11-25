@@ -655,14 +655,19 @@ export function plainQuote(text: string): string {
  * Calls `attempt` until it is not refused, waiting between tries, at most
  * `tries` times. True when an attempt went through. For a call whose target
  * may not exist yet, such as a scroll to a part drawn after a state write.
+ * A refusal that `isFinal` names (the person moved the window meanwhile)
+ * stops it at once, so a retry never works against the person.
  */
 export async function retried(
   attempt: () => Promise<{ deny?: string }>,
   wait: () => Promise<void>,
   tries: number,
+  isFinal: (deny: string) => boolean = () => false,
 ): Promise<boolean> {
   for (let i = 0; i < tries; i += 1) {
-    if ((await attempt()).deny === undefined) return true
+    const { deny } = await attempt()
+    if (deny === undefined) return true
+    if (isFinal(deny)) return false
     if (i < tries - 1) await wait()
   }
 

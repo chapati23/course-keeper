@@ -1021,10 +1021,6 @@ function alertCard(
     rule === undefined
       ? alertBanner(shown)
       : `Breaks ${isInstruction ? 'instruction' : 'rule'}: \u201c${rule.words}\u201d`
-  // The headline names the reference itself when no title is stored.
-  const reference = isInstruction || rule === undefined
-    ? 'Course Keeper'
-    : `${shown.reference.replace(/^invariant/, 'Invariant')} \u00b7 Course Keeper`
   const part = (key: string, label: string, body: string, quiet?: true) => (
     <Text key={key} dimColor={quiet}>
       <Text dimColor>{label}: </Text>
@@ -1091,6 +1087,7 @@ function alertCard(
                   () => $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' }),
                   () => $.clock.sleep(100),
                   10,
+                  deny => /moved meanwhile/.test(deny),
                 )
               }
             } catch {
@@ -1104,8 +1101,9 @@ function alertCard(
           onPress={() => falseAlarm($, id, at).catch(() => undefined)}
         />
         <Box flexGrow={1} />
+        {/* The brand beside the wheel; the quoted rule already names the rule. */}
         <Text size="caption" dimColor>
-          {reference}
+          Course Keeper
         </Text>
       </Box>
       {tight && doing}

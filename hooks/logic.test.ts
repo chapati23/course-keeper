@@ -479,6 +479,22 @@ describe('a refused call tried again', () => {
     expect(waits).toBe(2)
   })
 
+  test('stops at once on a refusal named final', async () => {
+    let calls = 0
+    const ok = await retried(
+      async () => {
+        calls += 1
+
+        return { deny: 'the window moved meanwhile' }
+      },
+      async () => undefined,
+      10,
+      deny => /moved meanwhile/.test(deny),
+    )
+    expect(ok).toBe(false)
+    expect(calls).toBe(1)
+  })
+
   test('gives up after the last try without a final wait', async () => {
     let waits = 0
     const ok = await retried(
