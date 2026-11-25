@@ -98,6 +98,28 @@ function alertOf(fields: Partial<CourseKeeperAlert> = {}): CourseKeeperAlert {
 }
 
 describe('the check reply', () => {
+  test('escaped quotes and backslashes in the evidence come back plain', () => {
+    const reply = DEVIATION.replace(
+      /evidence: .*/,
+      String.raw`evidence: "vat = round(total * Decimal(\"0.19\"), 2)\" and \"total_with_vat = total + vat"`,
+    )
+
+    expect(parseCheckReply(reply)).toMatchObject({
+      evidence: 'vat = round(total * Decimal("0.19"), 2)" and "total_with_vat = total + vat',
+    })
+    expect(
+      parseCheckReply(DEVIATION.replace(/evidence: .*/, String.raw`evidence: "path C:\\temp\\x"`)),
+    ).toMatchObject({ evidence: String.raw`path C:\temp\x` })
+  })
+
+  test('a backslash that is not before a quote or a backslash stays', () => {
+    const reply = DEVIATION.replace(/evidence: .*/, String.raw`evidence: "split on \n and \d+ here"`)
+
+    expect(parseCheckReply(reply)).toMatchObject({
+      evidence: String.raw`split on \n and \d+ here`,
+    })
+  })
+
   test('a deviation is read field by field', () => {
     expect(parseCheckReply(DEVIATION)).toEqual({
       verdict: 'deviation',
@@ -786,6 +808,17 @@ function row(
 }
 
 describe('the learn reply', () => {
+  test('escaped quotes in the quote come back plain, so the quote still matches', () => {
+    const reply = DRAFT_REPLY.replace(
+      /^quote: .*$/m,
+      String.raw`quote: "I will call Decimal(\"0.19\") in the exporter."`,
+    )
+    const parsed = parseLearnReply(reply)
+
+    expect(parsed).toMatchObject({ quote: 'I will call Decimal("0.19") in the exporter.' })
+    expect(holdsQuote('Agent: I will call Decimal("0.19") in the exporter.', (parsed as { quote: string }).quote)).toBe(true)
+  })
+
   test('a draft is read field by field, fences ignored, continuation lines joined', () => {
     expect(parseLearnReply(DRAFT_REPLY)).toEqual({
       result: 'draft',

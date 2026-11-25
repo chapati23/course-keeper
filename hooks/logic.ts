@@ -301,11 +301,16 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
   }
 }
 
+/**
+ * The text of a quoted field value, without its outer quote marks. A model
+ * escapes a double quote inside a quote as `\"` and a backslash as `\\`;
+ * both come back as the plain character. Any other backslash stays.
+ */
 function unquote(text: string): string {
   const trimmed = text.trim()
   const match = /^["“'](.*)["”']$/s.exec(trimmed)
 
-  return match ? (match[1] ?? '') : trimmed
+  return (match ? (match[1] ?? '') : trimmed).replace(/\\(["\\])/g, '$1')
 }
 
 function same(a: string, b: string): boolean {
