@@ -898,13 +898,21 @@ const MAX_ROW_WIDTH = 100
 /**
  * About how many rows the alert's frame takes with its empty lines, at
  * `width` cells: the two rules, the rule line, each part's empty line
- * and its heading and text wrapped together, and the actions.
+ * (`space` rows) and its heading and text wrapped together, and the actions.
  */
-function frameRows(width: number, hasRule: boolean, parts: readonly string[]): number {
+function frameRows(
+  width: number,
+  hasRule: boolean,
+  parts: readonly string[],
+  space: number,
+): number {
   const text = Math.max(width - 4, 10)
   // An empty line, then the heading (at most 27 cells) and the text.
-  const body = parts.reduce((rows, part) => rows + 1 + Math.ceil((part.length + 27) / text), 0)
-  const actions = 1 + Math.ceil(75 / width)
+  const body = parts.reduce(
+    (rows, part) => rows + space + Math.ceil((part.length + 27) / text),
+    0,
+  )
+  const actions = space + Math.ceil(75 / width)
 
   return 2 + (hasRule ? 1 : 0) + body + actions
 }
@@ -1082,10 +1090,13 @@ export const register: Register = (on, options) => {
             shown.evidence,
             held.showDetails ? shown.note : '',
           ].filter(text => text !== '')
-          // Without the empty lines when the frame would not fit the band:
-          // a Button scrolled out of view does not answer its hotkey.
-          const compact = frameRows(width, rule !== undefined, parts) > e.props.maxRows
-          const space = compact ? 0 : 1
+          // A Button scrolled out of view does not answer its hotkey. When the
+          // frame would not fit the band it drops its empty lines; when it
+          // still would not fit, the actions move up under the top rule.
+          const rows = (space: number) =>
+            frameRows(width, rule !== undefined, parts, space)
+          const space = rows(1) > e.props.maxRows ? 0 : 1
+          const actionsFirst = rows(0) > e.props.maxRows
           // A heading in bold and its text on the same line, wrapped at the
           // frame's width.
           const part = (key: string, heading: string, body: string, dim?: true) => (
@@ -1094,6 +1105,54 @@ export const register: Register = (on, options) => {
                 <Text bold>{heading}:</Text>{' '}
                 <Text dimColor={dim}>{body}</Text>
               </Text>
+            </Box>
+          )
+          const actions = (
+            <Box flexDirection="row" flexWrap="wrap" marginTop={actionsFirst ? 0 : space}>
+              <Button
+                key="tell"
+                plain
+                hotkey="1"
+                label="Tell the agent"
+                autoFocus
+                onPress={() => tell($, id, at).catch(() => undefined)}
+              />
+              {dot}
+              <Button
+                key="details"
+                plain
+                hotkey="2"
+                label="Details"
+                onPress={() =>
+                  change($, id, r =>
+                    r.current?.shownAt === at
+                      ? { ...r, showDetails: !r.showDetails }
+                      : r,
+                  ).catch(() => undefined)
+                }
+              />
+              {dot}
+              <Button
+                key="false-alarm"
+                plain
+                hotkey="3"
+                label={confirming ? 'Confirm false alarm' : 'False alarm'}
+                onPress={() =>
+                  falseAlarm($, id, at).catch(() => undefined)
+                }
+              />
+              {dot}
+              <Button
+                key="dismiss"
+                plain
+                hotkey="4"
+                label="Dismiss"
+                role="dismiss"
+                onPress={() =>
+                  answer($, id, at, 'dismissed').catch(() => undefined)
+                }
+              />
+              <Text dimColor> · ctrl+x tab</Text>
             </Box>
           )
           tree = (
@@ -1105,6 +1164,7 @@ export const register: Register = (on, options) => {
                 <Text dimColor> · Course Keeper{fill}</Text>
               </Box>
               <Box flexDirection="column" paddingLeft={2}>
+                {actionsFirst && actions}
                 {rule !== undefined && (
                   <Box flexDirection="row">
                     <Text>{rule.label}: </Text>
@@ -1119,52 +1179,7 @@ export const register: Register = (on, options) => {
                   part('quote', 'Quote', `"${shown.evidence}"`, true)}
                 {held.showDetails &&
                   part('note', 'For the agent', shown.note, true)}
-                <Box flexDirection="row" flexWrap="wrap" marginTop={space}>
-                  <Button
-                    key="tell"
-                    plain
-                    hotkey="1"
-                    label="Tell the agent"
-                    autoFocus
-                    onPress={() => tell($, id, at).catch(() => undefined)}
-                  />
-                  {dot}
-                  <Button
-                    key="details"
-                    plain
-                    hotkey="2"
-                    label="Details"
-                    onPress={() =>
-                      change($, id, r =>
-                        r.current?.shownAt === at
-                          ? { ...r, showDetails: !r.showDetails }
-                          : r,
-                      ).catch(() => undefined)
-                    }
-                  />
-                  {dot}
-                  <Button
-                    key="false-alarm"
-                    plain
-                    hotkey="3"
-                    label={confirming ? 'Confirm false alarm' : 'False alarm'}
-                    onPress={() =>
-                      falseAlarm($, id, at).catch(() => undefined)
-                    }
-                  />
-                  {dot}
-                  <Button
-                    key="dismiss"
-                    plain
-                    hotkey="4"
-                    label="Dismiss"
-                    role="dismiss"
-                    onPress={() =>
-                      answer($, id, at, 'dismissed').catch(() => undefined)
-                    }
-                  />
-                  <Text dimColor> · ctrl+x tab</Text>
-                </Box>
+                {!actionsFirst && actions}
               </Box>
               <Text dimColor>{ruleLine(width)}</Text>
             </Box>

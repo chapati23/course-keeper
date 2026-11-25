@@ -400,6 +400,26 @@ test('a band too short for the frame drops its empty lines, so the actions stay 
   await ui.unmount()
 })
 
+test('a band too short even for the compact frame draws the actions under the top rule', async ($, on) => {
+  const { clock } = world(on, () => DEVIATION)
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  const ui = await $.ui.mount({
+    ...BAND,
+    surface: 'terminal',
+    props: { ...BAND.props, maxRows: 5 },
+  })
+  const lines = await rowLines(ui)
+  // The actions are inside the band's first rows, so their hotkeys answer.
+  expect(lines.slice(0, 2)).toEqual([ROW[0], ACTIONS])
+  expect(lines).toEqual([ROW[0], ACTIONS, ...ROW.slice(1, 7).filter(line => line !== ''), BOTTOM])
+  await ui.unmount()
+})
+
 test('False alarm asks for a second press before it records the answer', async ($, on) => {
   const { clock } = world(on, () => DEVIATION)
 
