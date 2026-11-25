@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.png" alt="Course Keeper. Catches the turn where your coding agent breaks your project's rules. A plugin for Claude Code." width="800">
+  <img src="docs/images/banner.png" alt="Course Keeper. Catches the turn where your agent breaks your rules. A plugin for Claude Code." width="800">
 </p>
 
 You wrote down how your project works. One module handles money. The tool never sends email. Three hours into a session, your agent takes a shortcut that breaks one of those rules, and you find it in review the next day.
