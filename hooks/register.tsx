@@ -902,11 +902,15 @@ const MAX_ROW_WIDTH = 100
  */
 function frameRows(
   width: number,
-  hasRule: boolean,
+  top: string,
+  ruleText: string | undefined,
   parts: readonly string[],
   space: number,
 ): number {
   const text = Math.max(width - 4, 10)
+  // The top rule's words and the rule line wrap in a narrow band too.
+  const topRows = Math.ceil(top.length / width)
+  const ruleRows = ruleText === undefined ? 0 : Math.ceil(ruleText.length / text)
   // An empty line, then the heading (at most 27 cells) and the text.
   const body = parts.reduce(
     (rows, part) => rows + space + Math.ceil((part.length + 27) / text),
@@ -914,8 +918,8 @@ function frameRows(
   )
   const actions = space + Math.ceil(75 / width)
 
-  // The empty lines above and below the frame, then the two rules.
-  return 2 * space + 2 + (hasRule ? 1 : 0) + body + actions
+  // The empty lines above and below the frame, the rules and the rule line.
+  return 2 * space + topRows + 1 + ruleRows + body + actions
 }
 
 /**
@@ -1095,7 +1099,13 @@ export const register: Register = (on, options) => {
           // frame would not fit the band it drops its empty lines; when it
           // still would not fit, the buttons move into its first line.
           const rows = (space: number) =>
-            frameRows(width, rule !== undefined, parts, space)
+            frameRows(
+              width,
+              `── ▲ ${banner} · Course Keeper ──`,
+              rule === undefined ? undefined : `${rule.label}: "${rule.words}"`,
+              parts,
+              space,
+            )
           const space = rows(1) > e.props.maxRows ? 0 : 1
           const actionsFirst = rows(0) > e.props.maxRows
           // A heading in bold and its text on the same line, wrapped at the

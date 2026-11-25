@@ -426,6 +426,28 @@ test('a band too short even for the compact frame draws the buttons in its first
   await ui.unmount()
 })
 
+test('a long instruction that wraps in a narrow band counts its rows, so the buttons move up', async ($, on) => {
+  const words = 'never add a price table, a cache or a fallback to the client'
+  const { clock } = world(on, () =>
+    DEVIATION.replace('reference: invariant 1', `reference: instruction "${words}"`),
+  )
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  // At 40 cells the top rule takes 2 rows and the instruction line 3: the
+  // compact frame needs about 13 rows, more than the band's 12.
+  const ui = await $.ui.mount({
+    ...BAND,
+    surface: 'terminal',
+    props: { ...BAND.props, bodyColumns: 40, maxRows: 12 },
+  })
+  expect((await rowLines(ui))[0]).toBe(`▲ Your instruction · ${ACTIONS.trim()}`)
+  await ui.unmount()
+})
+
 test('False alarm asks for a second press before it records the answer', async ($, on) => {
   const { clock } = world(on, () => DEVIATION)
 
