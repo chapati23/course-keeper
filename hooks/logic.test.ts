@@ -76,6 +76,7 @@ import {
   withFinalAnswer,
   withoutDraft,
   plainQuote,
+  quotedSentence,
   retried,
 } from './logic'
 
@@ -1765,6 +1766,13 @@ describe('the learn answers', () => {
     expect(report({ earlier: { tested: 2, newAlerts: [], noResults: ['a'] } })).toContain(
       'Test on 2 earlier turns of this session: no new alert. No result on 1 of them (a).',
     )
+  })
+
+  test('a quote that ends a sentence gets a period only when it has no end mark', () => {
+    expect(quotedSentence('The exporter rounds totals.')).toBe('"The exporter rounds totals."')
+    expect(quotedSentence('Is this a fork?')).toBe('"Is this a fork?"')
+    expect(quotedSentence('Stop!')).toBe('"Stop!"')
+    expect(quotedSentence('no new files')).toBe('"no new files".')
   })
 
   test('the answer for a turn too long for the test shows the sentence as not tested', () => {

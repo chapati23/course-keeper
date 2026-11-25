@@ -711,6 +711,15 @@ function time(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')} UTC`
 }
 
+/**
+ * Quoted text that ends a sentence: the text in quotation marks, then a
+ * period, unless the text already ends with a period, a question mark or an
+ * exclamation mark.
+ */
+export function quotedSentence(text: string): string {
+  return /[.?!]$/.test(text) ? `"${text}"` : `"${text}".`
+}
+
 /** The default name of the vision file. */
 export const DEFAULT_VISION_FILE = 'VISION.md'
 /** The default name of the anti-patterns file. */
@@ -1781,7 +1790,7 @@ export function draftText(draft: CourseKeeperDraft): string {
 export function coveredText(reply: Extract<CheckReply, { verdict: 'deviation' }>): string {
   return (
     'The check already alerts on the turn you corrected with today\'s vision ' +
-    `(${reply.reference}): ${reply.alert} Evidence: "${reply.evidence}". ` +
+    `(${reply.reference}): ${reply.alert} Evidence: ${quotedSentence(reply.evidence)} ` +
     'If this alert is about the act you corrected, the vision already covers the act, ' +
     'so no sentence is offered. If the alert is about another matter, run ' +
     '/course-keeper learn <the act in words> again. The draft is dropped.'
@@ -1823,10 +1832,12 @@ function earlierLine(earlier: EarlierTest): string {
       : ` No result on ${noResults.length} of them (${noResults[0]}).`
   if (newAlerts.length > 0) {
     const count = newAlerts.length
-    const quoted = newAlerts.map(text => `"${text}"`).join('; ')
+    const quoted = newAlerts
+      .map((text, i) => (i === count - 1 ? quotedSentence(text) : `"${text}"`))
+      .join('; ')
 
     return (
-      `${start}${count} new alert${count === 1 ? '' : 's'}: ${quoted}. ` +
+      `${start}${count} new alert${count === 1 ? '' : 's'}: ${quoted} ` +
       `Read ${count === 1 ? 'it' : 'them'}: such an alert can be sound.${missing}`
     )
   }
@@ -1908,7 +1919,7 @@ export function learnReport(input: {
     // The control alerts, but not where the sentence goes: another matter.
     lines.push(
       `With today's vision the check alerts on this turn on ${control.reply.reference}, ` +
-        `another matter: "${control.reply.alert}".`,
+        `another matter: ${quotedSentence(control.reply.alert)}`,
     )
   }
   lines.push(
