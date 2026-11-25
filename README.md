@@ -9,7 +9,7 @@ You wrote down how your project works. One module handles money. The tool never 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-alert-dark.png">
-    <img src="docs/images/desktop-alert-light.png" width="720" alt="A Claude Code session in the Claude desktop app. The person asks the agent to print the VAT under the invoice total and to change only exporter.py. The agent computes the VAT in exporter.py. Above the prompt, a Course Keeper card says that the session breaks the rule &quot;One module computes every amount&quot;, says that the session added VAT math to exporter.py instead of money.py, and offers three buttons: Tell the agent, Details and False alarm.">
+    <img src="docs/images/desktop-alert-light.png" width="720" alt="A Claude Code session in the Claude desktop app. The person asks the agent to print the VAT under the invoice total and to change only exporter.py. The agent computes the VAT in exporter.py. Above the prompt, a Course Keeper card says that the session breaks the rule &quot;One module computes every amount&quot;, says that the session added VAT math to exporter.py instead of money.py, offers three buttons, Tell the agent, Details and False alarm, and has a close button.">
   </picture>
 </p>
 
@@ -19,7 +19,7 @@ You wrote down how your project works. One module handles money. The tool never 
 
 You need Claude Code 2.1.323 or later. Check with `claude --version` in a shell, or with `/status` in a session of the desktop app.
 
-1. Install the plugin. The terminal and the desktop app on one computer share their plugins, so one install covers both.
+1. Install the plugin. The terminal and the desktop app on one computer share their plugins. Choose user scope, and one install covers every project in both; project and local scope apply to one repository.
 
    **In the terminal**, at the prompt of a Claude Code session:
 
@@ -33,7 +33,7 @@ You need Claude Code 2.1.323 or later. Check with `claude --version` in a shell,
 
    1. Click **Plugins** in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**.
    2. Enter `chapati23/course-keeper` and click **Sync**.
-   3. Click **+** next to the prompt box, then **Add plugins**. Select Course Keeper and choose a scope.
+   3. Click **+** next to the prompt box, then **Add plugins**. If the menu shows **Plugins** instead, choose **Plugins** › **Browse plugins**, or **Manage plugins** when **Browse plugins** is missing. Select Course Keeper and choose a scope.
 
 2. Add a `VISION.md` at the root of your repository, with one rule per number:
 

@@ -18,7 +18,7 @@ claude plugin install course-keeper --marketplace chapati23/course-keeper
 
 Answer `y` to add the marketplace, then choose a scope. Update with `claude plugin update course-keeper`, then run `/reload-plugins` or start a new session.
 
-In the Code tab of the Claude desktop app: click **Plugins** in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**. Enter `chapati23/course-keeper` and click **Sync**. Then click **+** next to the prompt box, choose **Add plugins**, select Course Keeper and choose a scope. The terminal and the desktop app's local sessions read the same settings files, so a plugin installed in one is on in the other ([plugin install docs](https://code.claude.com/docs/en/plugins/install#choose-an-install-scope)). The desktop app runs its own copy of Claude Code; `/status` in a session shows its version.
+In the Code tab of the Claude desktop app: click **Plugins** in the sidebar, then **Add** › **Add marketplace** › **Add from a repository**. Enter `chapati23/course-keeper` and click **Sync**. Then click **+** next to the prompt box and choose **Add plugins**; if the menu shows **Plugins** instead, choose **Plugins** › **Browse plugins**, or **Manage plugins** when **Browse plugins** is missing. Select Course Keeper and choose a scope. The terminal and the desktop app's local sessions read the same settings files: at user scope a plugin installed in one is on in the other for every project, and at project or local scope for that repository only ([plugin install docs](https://code.claude.com/docs/en/plugins/install#choose-an-install-scope)). The desktop app runs its own copy of Claude Code; `/status` in a session shows its version.
 
 ## Settings
 
