@@ -49,3 +49,15 @@ A later test tried sentences that were written from one-line summaries of four f
 The check reads the text as written. A sentence that names too much can raise alerts on sound work, so state its scope in the sentence. The tests did not measure this.
 
 The tests are small. Every sentence that stopped a deviation was written after its author read that deviation. No test shows that such a sentence stops a different one. The replays ran with every tool denied and without the agent's earlier thinking. Course Keeper does not add VISION.md to the agent's context; it only checks the session against it.
+
+### False alerts
+
+A later test, on 2026-11-25, measured false alerts. It ran the check prompt of version 0.4.0 twice on each of 8 turns from the same private project that had been judged sound, with the project's vision and anti-patterns file: 16 checks, every tool denied.
+
+- The check raised 6 alerts in 16 checks, none of them false.
+- 4 alerts were correct: those turns did break the vision as written.
+- 2 alerts are unresolved: each quoted the agent's previous message, and whether it counts is the owner's call.
+- Each turn raised an alert in both tries or in neither.
+- The rule fixed before the run allowed at most 2 false alerts in 16. The result meets it even if both unresolved alerts were false.
+
+The test is small: 8 turns from one project, and the author judged each alert.
