@@ -1043,6 +1043,8 @@ function alertCard(
       flexDirection="column"
       borderStyle="round"
       borderColor="warning"
+      // The desktop app ignored this on Claude Code 2.1.332, though the types
+      // allow it; kept for when it draws. Check again on a newer version.
       backgroundColor="surface-0"
       padding="md"
       gap="sm"
@@ -1057,6 +1059,8 @@ function alertCard(
             text, which would replace the mark with a word. */}
         <Button
           key="dismiss"
+          // The types promise a native close control for this role; the desktop
+          // app drew none on 2.1.332, hence the ✕ child. Check again later.
           role="dismiss"
           onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
         >
