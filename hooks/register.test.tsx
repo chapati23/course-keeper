@@ -256,6 +256,7 @@ function linesOf(node: unknown): string[] {
   return [
     ...(typeof props.marginTop === 'number' && props.marginTop > 0 ? [''] : []),
     ...inner.map(l => (l === '' ? l : pad + l)),
+    ...(typeof props.marginBottom === 'number' && props.marginBottom > 0 ? [''] : []),
   ]
 }
 
@@ -280,6 +281,7 @@ const ACTIONS =
 
 /** The row for DEVIATION with the test's VISION. */
 const ROW = [
+  '',
   TOP('Session breaks invariant 1'),
   '  Your rule: "One service sets every price"',
   '',
@@ -289,6 +291,7 @@ const ROW = [
   '',
   ACTIONS,
   BOTTOM,
+  '',
 ]
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -338,10 +341,10 @@ test('Details shows the text for the agent as one more part, and hides it again'
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'details' })
   expect(await rowLines(ui)).toEqual([
-    ...ROW.slice(0, 6),
+    ...ROW.slice(0, 7),
     '',
     '  For the agent: Invariant 1 says one service sets every price. Move the table into that service.',
-    ...ROW.slice(6),
+    ...ROW.slice(7),
   ])
   await ui.press({ key: 'details' })
   expect(await rowLines(ui)).toEqual(ROW)
@@ -378,8 +381,8 @@ test('the frame is drawn at most 100 cells wide', async ($, on) => {
     props: { ...BAND.props, bodyColumns: 160 },
   })
   const lines = await rowLines(ui)
-  expect(lines[0]).toHaveLength(100)
-  expect(lines.at(-1)).toBe('─'.repeat(100))
+  expect(lines[1]).toHaveLength(100)
+  expect(lines.at(-2)).toBe('─'.repeat(100))
   await ui.unmount()
 })
 
@@ -400,7 +403,7 @@ test('a band too short for the frame drops its empty lines, so the actions stay 
   await ui.unmount()
 })
 
-test('a band too short even for the compact frame draws the actions under the top rule', async ($, on) => {
+test('a band too short even for the compact frame draws the buttons in its first line', async ($, on) => {
   const { clock } = world(on, () => DEVIATION)
 
   await personTypes($, 'ok')
@@ -414,9 +417,12 @@ test('a band too short even for the compact frame draws the actions under the to
     props: { ...BAND.props, maxRows: 5 },
   })
   const lines = await rowLines(ui)
-  // The actions are inside the band's first rows, so their hotkeys answer.
-  expect(lines.slice(0, 2)).toEqual([ROW[0], ACTIONS])
-  expect(lines).toEqual([ROW[0], ACTIONS, ...ROW.slice(1, 7).filter(line => line !== ''), BOTTOM])
+  // The buttons are in the band's first line, so their hotkeys answer.
+  expect(lines).toEqual([
+    `▲ Invariant 1 · ${ACTIONS.trim()}`,
+    ...ROW.slice(2, 8).filter(line => line !== ''),
+    BOTTOM,
+  ])
   await ui.unmount()
 })
 
@@ -484,10 +490,10 @@ test('an instead field draws as its own part between the alert and the quote', a
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await rowLines(ui)).toEqual([
-      ...ROW.slice(0, 4),
+      ...ROW.slice(0, 5),
       '',
       '  What it should do instead: Move the table into the price service.',
-      ...ROW.slice(4),
+      ...ROW.slice(5),
     ])
     // Not dim: it weighs as much as the alert.
     expect((await ui.find({ type: 'Text', text: /^Move the table into/ }))?.props.dimColor).toBeUndefined()
@@ -506,7 +512,7 @@ test('an instruction reference quotes the words in the headline', async ($, on) 
   await settle(clock)
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await rowLines(ui)).slice(0, 2)).toEqual([
+  expect((await rowLines(ui)).slice(1, 3)).toEqual([
     TOP('Session breaks your instruction'),
     '  Your instruction: "never add a table to the client"',
   ])
@@ -546,7 +552,7 @@ test('an alert stored before alerts kept a title still draws, without a title', 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     // No title: no "Your rule" line.
-    expect(await rowLines(ui)).toEqual([ROW[0], ...ROW.slice(2)])
+    expect(await rowLines(ui)).toEqual([ROW[0], ROW[1], ...ROW.slice(3)])
     await ui.unmount()
   }
 })

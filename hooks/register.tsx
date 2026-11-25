@@ -897,7 +897,7 @@ const MAX_ROW_WIDTH = 100
 
 /**
  * About how many rows the alert's frame takes with its empty lines, at
- * `width` cells: the two rules, the rule line, each part's empty line
+ * `width` cells: an empty line above and below, the two rules, the rule line, each part's empty line
  * (`space` rows) and its heading and text wrapped together, and the actions.
  */
 function frameRows(
@@ -914,7 +914,8 @@ function frameRows(
   )
   const actions = space + Math.ceil(75 / width)
 
-  return 2 + (hasRule ? 1 : 0) + body + actions
+  // The empty lines above and below the frame, then the two rules.
+  return 2 * space + 2 + (hasRule ? 1 : 0) + body + actions
 }
 
 /**
@@ -1092,7 +1093,7 @@ export const register: Register = (on, options) => {
           ].filter(text => text !== '')
           // A Button scrolled out of view does not answer its hotkey. When the
           // frame would not fit the band it drops its empty lines; when it
-          // still would not fit, the actions move up under the top rule.
+          // still would not fit, the buttons move into its first line.
           const rows = (space: number) =>
             frameRows(width, rule !== undefined, parts, space)
           const space = rows(1) > e.props.maxRows ? 0 : 1
@@ -1107,8 +1108,16 @@ export const register: Register = (on, options) => {
               </Text>
             </Box>
           )
+          // In the tightest band the first line holds the buttons, after a
+          // short name of what the session breaks, so their keys answer.
+          const short = /^instruction "/.test(shown.reference)
+            ? 'Your instruction'
+            : shown.reference.replace(/^invariant/, 'Invariant')
           const actions = (
             <Box flexDirection="row" flexWrap="wrap" marginTop={actionsFirst ? 0 : space}>
+              {actionsFirst && <Text color="warning">▲ </Text>}
+              {actionsFirst && <Text bold>{short}</Text>}
+              {actionsFirst && <Text dimColor> · </Text>}
               <Button
                 key="tell"
                 plain
@@ -1156,15 +1165,18 @@ export const register: Register = (on, options) => {
             </Box>
           )
           tree = (
-            <Box flexDirection="column" width={width}>
-              <Box flexDirection="row">
-                <Text dimColor>── </Text>
-                <Text color="warning">▲ </Text>
-                <Text bold>{banner}</Text>
-                <Text dimColor> · Course Keeper{fill}</Text>
-              </Box>
+            <Box flexDirection="column" width={width} marginTop={space} marginBottom={space}>
+              {actionsFirst ? (
+                actions
+              ) : (
+                <Box flexDirection="row">
+                  <Text dimColor>── </Text>
+                  <Text color="warning">▲ </Text>
+                  <Text bold>{banner}</Text>
+                  <Text dimColor> · Course Keeper{fill}</Text>
+                </Box>
+              )}
               <Box flexDirection="column" paddingLeft={2}>
-                {actionsFirst && actions}
                 {rule !== undefined && (
                   <Box flexDirection="row">
                     <Text>{rule.label}: </Text>
