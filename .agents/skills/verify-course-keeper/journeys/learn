@@ -1,0 +1,1061 @@
+#!/usr/bin/env python3
+"""/course-keeper learn with scripted model replies, in three runs, one after another.
+
+Run A (the default vision). Seven turns, every check answers "verdict: none":
+turn 1 states a standing instruction, turn 2 states one that /course-keeper forget
+then withdraws, turns 3 to 5 are sound, in turn 6 the agent does something that no
+check flags (its reply holds the quoted passage across a line break), and turn 7 is
+the person's correction, whose answer repeats the agent's words. Then: find without a
+hint, cancel, give a hint, accept and test (an alert of today's vision on another
+invariant, an earlier turn where both checks alert, exactly the newest 3 earlier turns,
+the person's messages up to the tested turn, no standing-instruction list but the
+withdrawn one), a new learn that replaces a waiting draft with a quote that is not the
+agent's and with no sentence, a sentence that does not start with "Never", already
+covered, a new alert on an earlier turn, a quote that only the last turn holds (an
+alert of today's vision on an instruction, a silent check with the sentence, one
+malformed earlier reply), and never writes or changes the check's state.
+
+Run B (--anti-patterns): a sentence for an existing invariant is offered for that
+invariant's section of ANTI-PATTERNS.md, a sentence for a new invariant and one for an
+invariant that the vision does not have for VISION.md, a check that alerts on another
+invariant with the sentence, malformed replies for every call, every excerpt call
+carries the anti-patterns text, and neither file changes.
+
+Run C (--no-vision): /course-keeper learn answers that it needs a vision and calls no model.
+
+Run D: Escape during a learn fork, an excerpt after a /compact that holds its summary, a
+compaction ("/rewind", "Summarize from here") that removes the corrected turn, and a
+corrected turn too long for the test. In Claude Code 2.1.332 a /compact keeps the earlier
+turns in what the plugin reads, so it does not remove the corrected turn.
+
+Not covered: the "already running" guard and the cancel of a learn step in flight.
+Claude Code runs a typed slash command only after the previous one has answered, and
+Escape aborts the plugin's model calls, so no typed command reaches either path. Tool
+rows in an excerpt: the harness starts Claude Code with no tools, so no turn has one.
+
+The scripted learn and excerpt replies prove how the plugin handles a reply. They do
+not prove that a real model finds the act or that a sentence works.
+"""
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import sys
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import (MARKERS, JourneyFailure, deviation, expect, final, has,  # noqa: E402
+                 is_check, is_excerpt, is_learn, is_main, is_messages, journey, learn_draft,
+                 project_files, script_turn, second_run, section, since, step,
+                 store_has_no_draft, turn, unscripted)
+
+REPO = Path(__file__).resolve().parents[4]
+VERSION = json.loads((REPO / ".claude-plugin/plugin.json").read_text())["version"]
+
+# Texts of hooks/logic.ts and hooks/register.tsx.
+NO_CATCH = ("The person gave no words with the request. Take the person's most recent "
+            "correction of the agent as the catch.")
+NO_INSTRUCTIONS = "None listed. Use what the person said in this session."
+WITHDRAWN_HEADING = "Withdrawn by the person; do not enforce these:"
+GIVE_WORDS = "To give the act in your words: /course-keeper learn <what the agent did wrong>"
+NO_DRAFT = "No draft sentence waits for an answer. Run /course-keeper learn first."
+DROPPED = "The draft sentence is dropped."
+NOT_SHOWN = ("The draft quoted words that are not in the agent's replies, so it is not shown. "
+             "Run /course-keeper learn again, or give the act in words.")
+NO_VISION = "No VISION.md found. /course-keeper learn does not run without it."
+CLOSING = ("This is a draft for the owners of VISION.md. Course Keeper does not change the file.",
+           "- An alert in the test does not prove that the sentence names the right act. "
+           "Compare it with what you corrected.",
+           # Two lines on the screen; has() matches it with whitespace collapsed.
+           "- Widen or narrow it before you add it. In a measurement on 8 recorded catches, "
+           "4 of 16 drafts were too broad and 4 too narrow.",
+           "- Whether an agent that reads the sentence avoids the act is not measured.")
+MALFORMED_DRAFT = "No sentence drafted: the draft reply was malformed."
+MALFORMED = "verdict: unsure"  # a check reply that parseCheckReply refuses
+NO_RESULT = "no result (the reply was malformed)."
+NOT_VERIFIED_SILENT = ("Test on the turn you corrected: the check stays silent with this "
+                       "sentence added. The sentence is not verified.")
+GONE = ("The turn you corrected is no longer in the session (a compaction can remove it). "
+        "The draft is dropped; nothing is kept.")
+TOO_LONG = ("The turn you corrected is too long for the test. The agent's words fall in the part "
+            "that the excerpt leaves out, so the sentence could not be tested. The draft is dropped.")
+ABORTED = "No sentence drafted: the fork ended with aborted."
+MESSAGES_HEAD = "## Messages the person sent, oldest first"
+SUMMARY_HEAD = "## Summary that replaced the earlier conversation"
+COMPACT_ASK = "Please provide your summary based on the conversation so far"
+PARTIAL_ASK = "Please provide your summary based on the RECENT messages only"
+CLOSING_AP = ("This is a draft for the owners of ANTI-PATTERNS.md and VISION.md. "
+              "Course Keeper does not change the files.")
+ANTI_PATTERNS_HEADING = "# Anti-patterns: acts that break the invariants above"
+ANTI_PATTERNS_NOTE = ("The number of each section below is the number of the invariant it "
+                      "belongs to, and an act named in a section is a deviation from that invariant.")
+LATEST = "## The agent's latest turn\n\n"
+VISION_HEAD, INSTRUCTIONS_HEAD = "## The project's vision", "## The person's standing instructions"
+ALERTS_HEAD = "## Alerts the person has already received in this session"
+INVARIANT_1 = "1. **One module computes every amount.** No other code rounds money."
+ANSWER = "course-keeper:"  # how Claude Code shows the answer of a plugin command
+
+I_ACTIVE = "name every new file in lower case"
+I_WITHDRAWN = "add a changelog line for every change"
+QUOTE = "I will convert each invoice total to euros in the exporter with a fixed rate of 1.08."
+# Turn 6 holds the quoted passage across a line break: runs of whitespace count as one space.
+FAILING_REPLY = "I will convert each invoice total to euros in the exporter\nwith a fixed rate of 1.08."
+# Only the answer to the correction holds these words.
+LAST_ONLY = "keep the exporter free of arithmetic"
+
+TURNS = [
+    ("From now on, name every new file in lower case.",
+     "Understood. I will name every new file in lower case.", f"- {I_ACTIVE}"),
+    ("From now on, add a changelog line for every change.",
+     "Understood. I will add a changelog line for every change.", f"- {I_WITHDRAWN}"),
+    ("Add a CSV export of the invoices.",
+     "The exporter now writes one CSV file per invoice.", "none"),
+    ("Name the invoice files by invoice number.",
+     "Each invoice file now carries its invoice number in its name.", "none"),
+    ("Sort the invoice lines by date.",
+     "The exporter now sorts the invoice lines by date before it writes them.", "none"),
+    ("Show the invoice totals in euros as well.", FAILING_REPLY, "none"),
+    ("No. Converting amounts is computing amounts; that belongs in the amounts module, "
+     "not in the exporter.",
+     f"Understood. You are right that \"{QUOTE}\" was wrong. I will move the euro conversion "
+     f"into the amounts module and {LAST_ONLY}.", "none"),
+]
+FAILING = 5      # index of the turn the person corrected (the 6th person message)
+CORRECTION = 6
+EARLIER = [4, 3, 2]  # the newest 3 turns before the corrected one
+ACT = "The agent planned to convert invoice totals to euros inside the exporter."
+HINT = "the agent converted the totals to euros in the exporter"
+
+# The instead and note fields of every scripted check reply in this journey.
+INSTEAD = "Convert amounts only in the one amounts module."
+NOTE = ("The agent converts amounts in the exporter. The invariant keeps every "
+        "computation of an amount in one module. Move the conversion there.")
+ALERT = "The agent converts invoice totals to euros in the exporter."
+
+# Run B: the anti-patterns file, one section per invariant.
+ANTI_PATTERNS = ("## 1. One module computes every amount\n\n"
+                 "- Never round an amount in a report writer.\n\n"
+                 "## 2. The tool never sends an invoice\n\n"
+                 "- Never open a mail connection from the tool.\n")
+B_TURNS = [TURNS[2], ("Show the invoice totals in euros as well.", QUOTE, "none"), TURNS[6]]
+
+# Run D: three turns, a /compact, three more turns, then a turn too long for the test.
+D_TURNS = B_TURNS
+SUMMARY = ("<analysis>The person works on an invoice exporter.</analysis>\n<summary>\n"
+           "1. Primary Request and Intent: the person builds a CSV export of invoices "
+           "with euro totals.\n</summary>")
+SUMMARY_WORDS = "the person builds a CSV export of invoices with euro totals."
+PARTIAL_SUMMARY = ("<analysis>The person asked for euro totals.</analysis>\n<summary>\n"
+                   "1. Primary Request and Intent: the person asked for euro totals in the "
+                   "exporter and corrected the agent.\n</summary>")
+POST_QUOTE = "I will convert each March total to euros in the exporter with a fixed rate of 1.08."
+AGAIN = ("Show the March totals in euros, converted by the amounts module.",
+         "The amounts module now converts the March totals to euros.")
+POST_TURNS = [
+    ("Add a total line at the end of each invoice file.",
+     "Each invoice file now ends with a total line.", "none"),
+    ("Show the March totals in euros.", POST_QUOTE, "none"),
+    ("No. Converting amounts belongs in the amounts module.",
+     "Understood. I will move the conversion into the amounts module.", "none"),
+]
+# A reply longer than the 60000 characters that an excerpt keeps of a turn, with the
+# quoted words in the middle that the excerpt leaves out (it keeps the first 20000 and
+# the last 40000 characters of the turn).
+LONG_QUOTE = "I will keep the euro rate as a constant in the exporter."
+FILLER = "The exporter writes each invoice line with its date, its hours and its rate. "
+LONG_REPLY = ((FILLER * 390).strip() + " " + LONG_QUOTE + " " + (FILLER * 590).strip()
+              + " That is how the exporter writes an invoice file.")
+LONG_TURNS = [
+    ("Explain how the exporter writes an invoice file.", LONG_REPLY),
+    ("No. The rate belongs in the amounts module.",
+     "Understood. I will move the rate into the amounts module."),
+]
+
+
+def draft_reply(sentence, place, quote=QUOTE, act=ACT):
+    """A learn reply in the exact format at the end of prompts/learn.md."""
+    return learn_draft(sentence, place, quote, act)
+
+
+def agent(turns, n):
+    """The agent's row of turn n as an excerpt shows it (rowText in hooks/logic.ts)."""
+    return "AGENT: " + turns[n][1]
+
+
+def latest_turn(request):
+    return request["last_user"].split(LATEST, 1)[1] if LATEST in request["last_user"] else ""
+
+
+def tested_turn(turns, request):
+    """The index of the turn whose agent row is the excerpt's latest turn, or None."""
+    found = [n for n in range(len(turns)) if agent(turns, n) in latest_turn(request)]
+    return found[0] if len(found) == 1 else None
+
+
+def vision_of(request):
+    return section(request["last_user"], VISION_HEAD, INSTRUCTIONS_HEAD).strip()
+
+
+def field(vision, anti_patterns):
+    """visionField in hooks/logic.ts: the vision, then the anti-patterns file under its heading."""
+    return (f"{vision.rstrip()}\n\n{ANTI_PATTERNS_HEADING}\n{ANTI_PATTERNS_NOTE}\n\n"
+            f"{anti_patterns}")
+
+
+class Answer:
+    """/course-keeper <arg> typed at the prompt, and its answer.
+
+    Waits only for the answer's first line, so a wrong answer fails on the promise that
+    names it, not on a screen timeout."""
+
+    def __init__(self, run, arg, label, what, timeout=30):
+        self.run, self.label = run, label
+        text = ("/course-keeper " + arg).rstrip()
+        self.mark = "❯ " + text + "\n"
+        self.sent = time.time() * 1000
+        run.send(text)
+        run.expect_wait(ANSWER, f"{what} (no answer to {text!r})", timeout=timeout,
+                        after=self.mark, save=label)
+        self.read()
+
+    def read(self):
+        view = Path(self.run.evidence, self.label + ".txt").read_text()
+        self.view = view[view.rfind(self.mark):]
+
+    def shows(self, text, what):
+        if has(self.view, text):
+            return
+        # The answer can still be drawing: give it a moment before the verdict.
+        result = self.run.ctl("wait", self.run.dir, text, "--timeout", "5", "--after",
+                              self.mark, "--save", self.label, check=False)
+        self.read()
+        expect(result.returncode == 0, what, text, self.view)
+
+    def lacks(self, text, what):
+        expect(not has(self.view, text), what, f"no {text!r}", self.view)
+
+    def line(self, start, what):
+        """The answer's line that starts with `start`, stripped."""
+        self.shows(start, what)
+        return next((ln.strip() for ln in self.view.split("\n") if ln.strip().startswith(start)),
+                    "")
+
+
+def no_draft_kept(run, view, label, what):
+    """Waits until the store saved the end of the learn step that `view` sent (a save after
+    the command was sent, with no learn step in flight), then asserts on `what` that the
+    store holds no draft. A kept draft fails by name, not on a timeout."""
+    deadline = time.monotonic() + 15
+    while True:
+        entry = json.loads(run.ctl("store", run.dir).stdout)
+        record = (entry or {}).get("record") or {}
+        if entry and entry.get("savedAt", 0) >= view.sent and record.get("learningSince") is None:
+            break
+        if time.monotonic() >= deadline:
+            run.store(save=label + "-timeout")
+            raise JourneyFailure("stored record: the learn step ended",
+                                 f"a save after {view.sent} with learningSince null",
+                                 json.dumps(entry))
+        time.sleep(0.2)
+    run.store(save=label)
+    expect("learn" not in record, what, "no draft in the store", json.dumps(record.get("learn")))
+
+
+def messages_of(request):
+    """The person's messages that an excerpt call lists, one per item."""
+    held = section(request["last_user"], MESSAGES_HEAD, LATEST).strip()
+    return held.split("\n\n") if held else []
+
+
+def script_excerpts(run, turns, sentence, plan):
+    """Excerpt-call rules. plan maps a name to (turn index, "today" or "with", reply).
+    A today rule skips every call that holds the sentence, so it can only answer a call
+    with today's vision. Today rules go first, so a with rule only gets calls that hold
+    the sentence. Returns {name: "rule N"}."""
+    names = {}
+    for kind in ("today", "with"):
+        for name, (n, which, reply) in plan.items():
+            if which == kind:
+                names[name] = run.reply(agent(turns, n), reply, times=1,
+                                        unless=[sentence] if kind == "today" else ())
+    return names
+
+
+def excerpt_calls(run, view, mark, turns, rules, sentence, tested, instructions, main_model,
+                  kept="learn yes tests the turn that the draft kept"):
+    """The learn yes calls after mark, checked call by call. `tested` is the sorted list of
+    turn indexes that the with-sentence calls must test. Returns (calls, by_rule)."""
+    calls = since(run, mark)
+    expect(calls, kept, "a call that checks the corrected turn", view.view)
+    seen = json.dumps([(r["seq"], r["matched"], tested_turn(turns, r)) for r in calls])
+    expect(all(is_excerpt(r) for r in calls),
+           "every model call of learn yes carries the excerpt head (prompts/excerpt-head.md)",
+           "the excerpt head in every call", seen)
+    with_calls = [r for r in calls if sentence in r["last_user"]]
+    expect(sorted(tested_turn(turns, r) for r in with_calls
+                  if tested_turn(turns, r) is not None) == tested
+           and all(tested_turn(turns, r) is not None for r in with_calls),
+           "the sentence is tested on the corrected turn and on exactly the newest "
+           f"{len(tested) - 1} earlier turns", f"turn indexes {tested}", seen)
+    by_rule = {name: [r for r in calls if r["matched"] == rule] for name, rule in rules.items()}
+    expect(len(calls) == len(rules) and all(len(v) == 1 for v in by_rule.values()),
+           "learn yes sends one excerpt call per scripted reply and nothing else",
+           f"{len(rules)} calls, one per rule {json.dumps(rules)}", seen)
+    expect(calls[0]["seq"] == by_rule["control"][0]["seq"],
+           "the first call checks the corrected turn with today's vision", "control first", seen)
+    for r in calls:
+        text = r["last_user"]
+        expect(MARKERS["check-head"] in text and MARKERS["check"] not in text,
+               "an excerpt call holds the check prompt under the excerpt head",
+               "'# The check' and no fork head", text[:2000])
+        held = section(text, INSTRUCTIONS_HEAD, ALERTS_HEAD).strip()
+        expect(held == instructions, "an excerpt call holds no list of active standing "
+               "instructions, and tells the check not to enforce the withdrawn ones",
+               instructions, held)
+        alerts = section(text, ALERTS_HEAD, "# How to check")
+        expect(alerts.strip() == "None.", "an excerpt call lists no alerts", "None.", alerts)
+        expect(r["model"] == main_model and r["stream"] is False,
+               "an excerpt call is a plain call on the session's model",
+               f"{main_model}, stream false", f"{r['model']}, stream {r['stream']}")
+        n = tested_turn(turns, r)
+        wanted = None if n is None else [prompt for prompt, *_ in turns[:n + 1]]
+        expect(messages_of(r) == wanted,
+               "an excerpt call lists the person's messages up to the tested turn, oldest "
+               "first, and none after it", json.dumps(wanted), json.dumps(messages_of(r)))
+    return calls, by_rule
+
+
+def stage(run):
+    """Seven turns; turn 2's instruction is withdrawn. Every check answers none."""
+    for n, (prompt, answer, haiku) in enumerate(TURNS):
+        script_turn(run, prompt, answer, haiku=haiku)
+        turn(run, prompt, answer, f"turn-{n + 1}", extract=True, outcome="verdict: none")
+    view = Answer(run, "forget 2", "forget-2", "forget withdraws instruction 2")
+    view.shows(f'Standing instruction 2 removed: "{I_WITHDRAWN}"', "forget quotes the words")
+    record = run.wait_store(lambda r: r["instructions"] == [I_ACTIVE]
+                            and r["withdrawn"] == [I_WITHDRAWN],
+                            "one active and one withdrawn instruction", save="store-staged")
+    expect(record["current"] is None and "learn" not in record,
+           "the staged session holds no alert and no draft", "none", json.dumps(record))
+    status = Answer(run, "", "status-staged", "/course-keeper shows the status")
+    return record, status.line("Last check:", "the status shows the last check")
+
+
+def check_state(record):
+    """The parts of the record that only the check writes."""
+    return {key: record.get(key) for key in ("lastCheck", "current", "alerts", "checkingSince")}
+
+
+def learn(run):
+    vision = Path(run.evidence, "vision.md").read_text()
+    seed_bytes = Path(run.dir, "scratch/project/VISION.md").read_bytes()
+    staged, last_check = stage(run)
+    files_before = project_files(run)
+    main_model = next(r["model"] for r in run.requests() if is_main(r))
+    learn_mark = run.last_seq()
+    held = f"{NO_INSTRUCTIONS}\n\n{WITHDRAWN_HEADING}\n- {I_WITHDRAWN}"
+    facts = []
+
+    step("1 find without a hint")
+    s1 = ("Never convert an amount to another currency outside the amounts module, "
+          "for example the euro totals in the exporter: let the amounts module convert.")
+    run.reply(MARKERS["learn"], draft_reply(s1, "invariant 1"), times=1)
+    mark = run.last_seq()
+    view = Answer(run, "learn", "learn-1", "learn shows the act it read")
+    for text in ("Course Keeper read this as the act you corrected:", ACT,
+                 f"The agent's words: \"{QUOTE}\"", "If this is the act: /course-keeper learn yes",
+                 "If it is not: /course-keeper learn <what the agent did wrong, in your words>",
+                 "To drop it: /course-keeper learn cancel"):
+        view.shows(text, f"the answer shows {text!r}")
+    for text in (s1, "Never convert"):
+        view.lacks(text, "the first answer does not show the sentence")
+    for text in ("place:", "variant", "forms:"):
+        view.lacks(text, "the first answer shows no other field of the draft")
+    lines = view.view.split("\n")
+    act_line = next((ln for ln in lines if ACT in ln), "")
+    words_line = next((ln for ln in lines if "The agent's words:" in ln), "")
+    indent = len(act_line) - len(act_line.lstrip(" "))
+    expect(act_line.strip() == ACT and
+           indent == len(words_line) - len(words_line.lstrip(" ")) + 2,
+           "the act stands on its own line, two spaces in", repr("  " + ACT),
+           f"{act_line!r} under {words_line!r}")
+    fork = run.wait_request(lambda r: r["seq"] > mark and is_learn(r), "the learn fork")
+    text = fork["last_user"]
+    expect(INVARIANT_1 in section(text, VISION_HEAD, "# How to draft"),
+           "the learn fork carries the vision", INVARIANT_1, text[:4000])
+    expect(final(TURNS[CORRECTION][1]) in text, "the learn fork carries the last final answer",
+           final(TURNS[CORRECTION][1]), text[:4000])
+    expect(NO_CATCH in section(text, "## The catch, as the plugin recorded it", VISION_HEAD),
+           "without words the catch field holds the no-words text", NO_CATCH, text[:4000])
+    expect(fork["stream"] and fork["model"] == main_model, "the learn fork streams on the "
+           "session's model", f"stream on {main_model}",
+           f"stream={fork['stream']} model={fork['model']}")
+    record = run.wait_store(lambda r: (r.get("learn") or {}).get("quote") == QUOTE,
+                            "the store holds the draft", save="store-draft-1")
+    draft = record["learn"]
+    expect(draft["sentence"] == s1 and draft["act"] == ACT and draft["place"] == "invariant 1",
+           "the stored draft is the scripted one", s1, json.dumps(draft))
+    # docs/reference.md, Limits: the last reply that holds the words before the person's
+    # last message. Turn 6 holds them across a line break; the answer to the correction
+    # (turn 7) holds them on one line, and must not move the draft.
+    expect(draft["personCount"] == FAILING + 1,
+           "the draft keeps the corrected turn (6th person message): a line break in the reply "
+           "still matches, and the correction's answer that repeats the words does not count",
+           f"personCount {FAILING + 1}", json.dumps(draft))
+    expect(draft["model"] == main_model, "the draft keeps the session's model", main_model,
+           json.dumps(draft))
+    calls = since(run, mark)
+    expect([r["seq"] for r in calls] == [fork["seq"]], "learn sends only the fork",
+           f"one request: {fork['seq']}", json.dumps([(r["seq"], r["model"]) for r in calls]))
+    facts.append(f"learn fork: model={fork['model']} stream={fork['stream']} "
+                 f"draft.model={draft['model']} personCount={draft['personCount']}")
+
+    step("2 cancel")
+    mark = run.last_seq()
+    view = Answer(run, "learn cancel", "learn-cancel", "cancel drops the draft")
+    view.shows(DROPPED, "cancel with a draft says the draft is dropped")
+    store_has_no_draft(run, "store-cancelled")
+    view = Answer(run, "learn yes", "learn-yes-no-draft", "learn yes without a draft")
+    view.shows(NO_DRAFT, "learn yes without a draft says that none waits")
+    store_has_no_draft(run, "store-no-draft")
+    expect(not since(run, mark), "cancel and yes without a draft call no model", "none",
+           json.dumps([r["seq"] for r in since(run, mark)]))
+
+    step("3 give a hint")
+    s2 = ("Never convert an amount to another currency, or plan or recommend it, in code outside "
+          "the one amount module, for example the euro totals in the exporter: convert amounts "
+          "only in the amounts module.")
+    run.reply(MARKERS["learn"], draft_reply(s2, "invariant 1"), times=1)
+    mark = run.last_seq()
+    view = Answer(run, "learn " + HINT, "learn-hint", "learn with words shows the act")
+    view.shows(ACT, "the answer shows the act")
+    view.lacks(s2, "the answer does not show the sentence")
+    fork = run.wait_request(lambda r: r["seq"] > mark and is_learn(r), "the learn fork with words")
+    catch = section(fork["last_user"], "## The catch, as the plugin recorded it", VISION_HEAD)
+    wanted = f"The person described the act in these words: \"{HINT}\""
+    expect(wanted in catch and NO_CATCH not in catch, "the catch field holds the person's words",
+           wanted, catch)
+    record = run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s2,
+                            "the store holds the new draft", save="store-draft-2")
+    drafted = datetime.fromtimestamp(record["learn"]["draftedAt"] / 1000,
+                                     timezone.utc).strftime("%Y-%m-%d")
+
+    step("4 accept and test: another invariant, both checks alert, the newest 3 earlier turns")
+    other_alert = "The exporter opens a mail connection to send the invoices."
+    rules = script_excerpts(run, TURNS, s2, {
+        "control": (FAILING, "today", deviation("invariant 2", other_alert, INSTEAD, QUOTE, NOTE)),
+        "verify": (FAILING, "with", deviation("invariant 1", ALERT, INSTEAD, QUOTE, NOTE)),
+        "t5": (4, "with", "verdict: none"),
+        "t4": (3, "with", deviation("invariant 1", ALERT, INSTEAD, TURNS[3][1], NOTE)),
+        "t4-today": (3, "today", deviation("invariant 1", ALERT, INSTEAD, TURNS[3][1], NOTE)),
+        "t3": (2, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes", "learn yes tests the draft", timeout=60)
+    expect(any(tested_turn(TURNS, r) == FAILING for r in since(run, mark)),
+           "learn yes tests the corrected turn that the draft kept (its reply holds the words "
+           "across a line break)", "a call whose latest turn is turn 6",
+           json.dumps([(r["seq"], tested_turn(TURNS, r)) for r in since(run, mark)]))
+    view.shows("Draft sentence for VISION.md, invariant 1:",
+               "an alert of today's vision on another invariant does not stop the test")
+    calls, by_rule = excerpt_calls(run, view, mark, TURNS, rules, s2, [2, 3, 4, FAILING], held,
+                                   main_model)
+    expect(s2 in by_rule["verify"][0]["last_user"] and s2 not in by_rule["control"][0]["last_user"],
+           "the corrected turn is checked once with today's vision and once with the sentence",
+           "sentence only in the verify call",
+           json.dumps([by_rule["control"][0]["seq"], by_rule["verify"][0]["seq"]]))
+    placed = "No other code rounds money.\n   " + s2 + "\n2. **The tool never sends an invoice.**"
+    with_sentence = [r for r in calls if s2 in r["last_user"]]
+    expect(all(placed in r["last_user"] for r in with_sentence),
+           "the sentence sits at the end of invariant 1", placed,
+           with_sentence[0]["last_user"][:3000])
+    expect(vision_of(by_rule["control"][0]) == vision.strip(),
+           "the control call holds today's vision", vision, calls[0]["last_user"][:3000])
+    control = by_rule["control"][0]
+    expect(agent(TURNS, FAILING) in latest_turn(control)
+           and TURNS[CORRECTION][0] not in control["last_user"],
+           "the corrected turn's excerpt holds the failing reply and not the correction",
+           agent(TURNS, FAILING), control["last_user"][-3000:])
+    expect(I_ACTIVE not in section(control["last_user"], INSTRUCTIONS_HEAD, ALERTS_HEAD),
+           "the active instruction is not listed", f"no {I_ACTIVE!r}", control["last_user"][:3000])
+    report = ["  " + s2,
+              # One item with the next line, so that a second period after the quote fails.
+              f"With today's vision the check alerts on this turn on invariant 2, another matter: "
+              f"\"{other_alert}\"\n"
+              "Test on the turn you corrected: the check alerts with this sentence added.",
+              "Must stay allowed: Show an amount that the amounts module already converted.",
+              f"Where it comes from: the agent's words \"{QUOTE}\"; drafted {drafted} UTC by "
+              f"{main_model}; Course Keeper {VERSION}.",
+              *CLOSING]
+    for text in report:
+        view.shows(text, f"the report shows {text!r}")
+    view.shows("Test on 3 earlier turns of this session: no new alert.",
+               "an earlier turn where today's vision alerts too counts as no new alert")
+    store_has_no_draft(run, "store-tested")
+    facts.append("learn yes: " + ", ".join(f"{r['seq']}:{r['matched']}" for r in calls))
+
+    step("5 a new learn replaces the waiting draft: a quote that is not the agent's")
+    s3 = ("Never convert an amount in the exporter, for example the euro totals: "
+          "let the amounts module convert.")
+    run.reply(MARKERS["learn"], draft_reply(s3, "invariant 1"), times=1)
+    Answer(run, "learn", "learn-waits-1", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s3,
+                   "a draft waits for an answer", save="store-waits-1")
+    person_words = "Converting amounts is computing amounts"
+    run.reply(MARKERS["learn"], draft_reply(
+        "Never convert an amount outside the amounts module, for example in the exporter: "
+        "convert in the amounts module.", "invariant 1", quote=person_words), times=1)
+    mark = run.last_seq()
+    view = Answer(run, "learn", "learn-not-shown", "learn with a quote of the person's words")
+    expect(len(since(run, mark)) == 1 and is_learn(since(run, mark)[0]),
+           "only the learn fork ran", "one learn fork", json.dumps([r["seq"] for r in since(run, mark)]))
+    view.shows(NOT_SHOWN, "a quote that is not in the agent's replies is not shown")
+    view.shows(GIVE_WORDS, "the answer says how to give the act in words")
+    view.lacks(ACT, "nothing of the draft is shown")
+    view.lacks("Never convert", "nothing of the draft is shown")
+    no_draft_kept(run, view, "store-not-shown", "a new learn replaces the waiting draft: a draft "
+                  "that is not shown leaves no draft")
+    Answer(run, "learn yes", "learn-yes-after-not-shown", "learn yes after a draft that is not "
+           "shown").shows(NO_DRAFT, "after a new learn shows nothing, learn yes finds no draft")
+
+    step("6 a new learn replaces the waiting draft: no sentence")
+    run.reply(MARKERS["learn"], draft_reply(s3, "invariant 1"), times=1)
+    Answer(run, "learn", "learn-waits-2", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s3,
+                   "a draft waits for an answer", save="store-waits-2")
+    reason = "The person asked for a matter of taste that no sentence about the project covers."
+    run.reply(MARKERS["learn"], "result: none\nreason: " + reason, times=1)
+    view = Answer(run, "learn", "learn-none", "learn with a none reply")
+    view.shows("No sentence drafted: " + reason, "the answer gives the reply's reason")
+    view.shows(GIVE_WORDS, "the answer says how to give the act in words")
+    no_draft_kept(run, view, "store-none", "a new learn replaces the waiting draft: a reply "
+                  "with no sentence leaves no draft")
+    Answer(run, "learn yes", "learn-yes-after-none", "learn yes after a reply with no "
+           "sentence").shows(NO_DRAFT, "after a learn with no sentence, learn yes finds no draft")
+
+    step("7 a sentence that does not start with \"Never\"")
+    always = ("Always convert amounts to another currency in the amounts module, for example "
+              "the euro totals of the exporter.")
+    run.reply(MARKERS["learn"], draft_reply(always, "invariant 1"), times=1)
+    view = Answer(run, "learn", "learn-not-never", "learn with a sentence that does not start "
+                  "with Never")
+    view.shows(MALFORMED_DRAFT, "a draft sentence that does not start with \"Never\" is refused")
+    view.shows(GIVE_WORDS, "the answer says how to give the act in words")
+    view.lacks(ACT, "nothing of the refused draft is shown")
+    no_draft_kept(run, view, "store-not-never",
+                  "a draft sentence that does not start with \"Never\" keeps no draft")
+
+    step("8 already covered")
+    s4 = ("Never compute a converted amount in the exporter, for example the euro totals: "
+          "take converted amounts from the amounts module.")
+    run.reply(MARKERS["learn"], draft_reply(s4, "invariant 1"), times=1)
+    Answer(run, "learn", "learn-covered-draft", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s4, "the draft to cover")
+    covered_alert = "The agent converts invoice totals in the exporter, outside the amounts module."
+    rules = script_excerpts(run, TURNS, s4, {"control": (
+        FAILING, "today", deviation("invariant 1", covered_alert, INSTEAD, QUOTE, NOTE))})
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-covered", "learn yes on a covered act")
+    calls = since(run, mark)
+    expect(len(calls) == 1 and calls[0]["matched"] == rules["control"]
+           and s4 not in calls[0]["last_user"],
+           "a control alert on the sentence's invariant stops the test after one call",
+           f"one call matched {rules['control']}",
+           json.dumps([(r["seq"], r["matched"]) for r in calls]))
+    covered = ("The check already alerts on the turn you corrected with today's vision "
+               f"(invariant 1): {covered_alert} Evidence: \"{QUOTE}\" If this alert is about the "
+               "act you corrected, the vision already covers the act, so no sentence is offered. "
+               "If the alert is about another matter, run /course-keeper learn <the act in words> "
+               "again. The draft is dropped.")
+    view.shows(covered, "the answer says the vision covers the act")
+    view.lacks(s4, "no sentence is offered")
+    view.lacks("Draft sentence for", "no sentence is offered")
+    store_has_no_draft(run, "store-covered")
+
+    step("9 a new alert on an earlier turn")
+    s5 = ("Never write an invoice file whose amounts the amounts module did not compute, "
+          "for example a CSV with euro totals from the exporter: write the module's amounts.")
+    run.reply(MARKERS["learn"], draft_reply(s5, "new"), times=1)
+    Answer(run, "learn", "learn-new-draft", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s5, "the new-place draft")
+    earlier_alert = "The exporter writes invoice files whose names it builds itself."
+    rules = script_excerpts(run, TURNS, s5, {
+        "control": (FAILING, "today", "verdict: none"),
+        "verify": (FAILING, "with", deviation("invariant 3", ALERT, INSTEAD, QUOTE, NOTE)),
+        "t5": (4, "with", "verdict: none"),
+        "t4": (3, "with", deviation("invariant 3", earlier_alert, INSTEAD, TURNS[3][1], NOTE)),
+        "t4-today": (3, "today", "verdict: none"),
+        "t3": (2, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-new", "learn yes tests the draft", timeout=60)
+    calls, by_rule = excerpt_calls(run, view, mark, TURNS, rules, s5, [2, 3, 4, FAILING],
+                                   held, main_model)
+    new_item = "\n\n3. " + s5 + "\n"
+    expect(all(new_item in r["last_user"] for r in calls if s5 in r["last_user"]),
+           "the sentence is appended as invariant 3", new_item, calls[-1]["last_user"][:3000])
+    for text in ("Draft sentence for VISION.md, as a new invariant:", "  " + s5,
+                 "Test on the turn you corrected: the check alerts with this sentence added."):
+        view.shows(text, f"the report shows {text!r}")
+    view.shows(f"Test on 3 earlier turns of this session: 1 new alert: \"{TURNS[3][1]}\" "
+               "Read it: such an alert can be sound.",
+               "an earlier turn's alert counts as new when today's vision is silent there")
+    view.lacks("With today's vision the check alerts",
+               "no control alert line when today's vision is silent")
+    store_has_no_draft(run, "store-new-alert")
+
+    step("10 a quote that only the last turn holds: today's vision alerts on an instruction, "
+         "the check stays silent with the sentence, one earlier reply is malformed")
+    s6 = ("Never put arithmetic on amounts in the exporter, for example a euro conversion: "
+          "call the amounts module.")
+    act6 = "The agent kept arithmetic in the exporter."
+    run.reply(MARKERS["learn"], draft_reply(s6, "invariant 1", quote=LAST_ONLY, act=act6), times=1)
+    view = Answer(run, "learn", "learn-last-only", "learn with words that only the last turn holds")
+    view.shows(f"The agent's words: \"{LAST_ONLY}\"",
+               "a quote that no reply before the person's last message holds falls to the "
+               "person's last turn and is shown")
+    record = run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s6,
+                            "the store holds the last-turn draft", save="store-draft-last")
+    expect(record["learn"]["personCount"] == CORRECTION + 1,
+           "the draft keeps the person's last turn (7th person message)",
+           f"personCount {CORRECTION + 1}", json.dumps(record["learn"]))
+    # No end mark: the report closes the quote with a period (quotedSentence in logic.ts).
+    # The alerts quoted in steps 4, 8 and 9 end with "." and get no second period.
+    instruction_alert = "The agent names the export file Invoices.CSV, not in lower case"
+    rules = script_excerpts(run, TURNS, s6, {
+        "control": (CORRECTION, "today", deviation(f'instruction "{I_ACTIVE}"', instruction_alert,
+                                                   INSTEAD, TURNS[CORRECTION][1], NOTE)),
+        "verify": (CORRECTION, "with", "verdict: none"),
+        "t6": (FAILING, "with", "verdict: none"),
+        "t5": (4, "with", MALFORMED),
+        "t4": (3, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-last", "learn yes tests the last turn", timeout=60)
+    expect(any(tested_turn(TURNS, r) == CORRECTION for r in since(run, mark)),
+           "learn yes tests the person's last turn that the draft kept",
+           "a call whose latest turn is turn 7",
+           json.dumps([(r["seq"], tested_turn(TURNS, r)) for r in since(run, mark)]))
+    view.shows("Draft sentence for VISION.md, invariant 1:",
+               "an alert of today's vision on an instruction does not stop the test")
+    calls, by_rule = excerpt_calls(run, view, mark, TURNS, rules, s6,
+                                   [3, 4, FAILING, CORRECTION], held, main_model)
+    view.shows(f"With today's vision the check alerts on this turn on instruction \"{I_ACTIVE}\", "
+               f"another matter: \"{instruction_alert}\".",
+               "the report names today's alert on an instruction as another matter, and a "
+               "quote without an end mark gets one period")
+    view.shows(NOT_VERIFIED_SILENT, "a check that stays silent with the sentence added "
+               "reports the sentence as not verified")
+    view.lacks("the check alerts with this sentence added",
+               "a silent check with the sentence is not reported as an alert")
+    view.shows("Test on 3 earlier turns of this session: no new alert. "
+               f"No result on 1 of them (the reply was malformed).",
+               "a malformed reply on one earlier turn is reported as no result on 1 of them")
+    store_has_no_draft(run, "store-last-tested")
+
+    step("11 never writes and leaves the check's state")
+    expect(Path(run.dir, "scratch/project/VISION.md").read_bytes() == seed_bytes,
+           "VISION.md is byte-identical to the seed", "unchanged", "changed")
+    expect(not Path(run.dir, "scratch/project/ANTI-PATTERNS.md").exists(),
+           "no ANTI-PATTERNS.md was created", "absent", "present")
+    expect(project_files(run) == files_before, "the project holds the same files",
+           json.dumps(files_before), json.dumps(project_files(run)))
+    sent = [r["seq"] for r in run.requests() if r["seq"] > learn_mark and is_main(r)]
+    expect(not sent, "no learn step sent a main-thread request", "none", json.dumps(sent))
+    plugin = [r for r in run.requests() if r["seq"] > learn_mark and is_messages(r)]
+    expect(all(is_learn(r) or is_excerpt(r) for r in plugin),
+           "every request after the staging is a learn fork or an excerpt call", "all",
+           json.dumps([(r["seq"], r["model"], r["last_user"][:80]) for r in plugin]))
+    record = run.store(save="store-after-learn")
+    expect(check_state(record) == check_state(staged),
+           "learn and learn yes leave the store's last check, current alert and alerts as "
+           "they were", json.dumps(check_state(staged)), json.dumps(check_state(record)))
+    status = Answer(run, "", "status-after-learn", "/course-keeper shows the status")
+    after = status.line("Last check:", "the status shows the last check")
+    expect(after == last_check, "/course-keeper shows the same last check after the learn "
+           "steps as before them", last_check, after)
+
+    step("evidence")
+    run.requests(save="model-requests")
+    run.screen(save="final-screen")
+    unscripted(run)
+
+    step("12 anti-patterns file (second run)")
+    fixture = Path(run.evidence, "anti-patterns-fixture.md")
+    fixture.write_text(ANTI_PATTERNS)
+    with second_run("--anti-patterns", str(fixture), parent=run, label="anti-patterns") as other:
+        facts += anti_patterns(other)
+
+    step("13 no vision (third run)")
+    with second_run("--no-vision", parent=run, label="no-vision") as other:
+        no_vision(other)
+
+    step("14 Escape, compaction and a long turn (fourth run)")
+    with second_run(parent=run, label="compaction") as other:
+        facts += compaction(other)
+
+    Path(run.evidence, "wire-facts.txt").write_text("\n".join(facts) + "\n")
+    print("\n".join(facts))
+
+
+def anti_patterns(run):
+    """Run B: the sentence goes into ANTI-PATTERNS.md for an existing invariant, into
+    VISION.md for a new one; the excerpt calls carry the anti-patterns text."""
+    project = Path(run.dir, "scratch/project")
+    vision = Path(run.evidence, "vision.md").read_text()
+    seed = {name: (project / name).read_bytes() for name in ("VISION.md", "ANTI-PATTERNS.md")}
+    expect(seed["ANTI-PATTERNS.md"].decode() == ANTI_PATTERNS, "the fixture holds the anti-patterns "
+           "file", ANTI_PATTERNS, seed["ANTI-PATTERNS.md"].decode())
+    files_before = project_files(run)
+    run.reply(MARKERS["extract"], "none", model="haiku")
+    for n, (prompt, answer, _) in enumerate(B_TURNS):
+        script_turn(run, prompt, answer)
+        turn(run, prompt, answer, f"turn-{n + 1}", extract=True, outcome="verdict: none")
+    main_model = next(r["model"] for r in run.requests() if is_main(r))
+    today = field(vision, ANTI_PATTERNS)
+
+    step("12a draft for an existing invariant")
+    sa = ("Never convert an amount to another currency in the exporter, for example the euro "
+          "totals: let the amounts module convert.")
+    run.reply(MARKERS["learn"], draft_reply(sa, "invariant 1"), times=1)
+    mark = run.last_seq()
+    Answer(run, "learn", "learn-ap", "learn shows the act").shows(ACT, "the answer shows the act")
+    fork = run.wait_request(lambda r: r["seq"] > mark and is_learn(r), "the learn fork")
+    expect(section(fork["last_user"], VISION_HEAD, "# How to draft").strip() == today.strip(),
+           "the learn fork carries the vision and the anti-patterns text", today,
+           fork["last_user"][:4000])
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == sa, "the draft")
+    rules = script_excerpts(run, B_TURNS, sa, {
+        "control": (1, "today", "verdict: none"),
+        "verify": (1, "with", deviation("invariant 1", ALERT, INSTEAD, QUOTE, NOTE)),
+        "t1": (0, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-ap", "learn yes tests the draft", timeout=60)
+    calls, by_rule = excerpt_calls(run, view, mark, B_TURNS, rules, sa, [0, 1], NO_INSTRUCTIONS,
+                                   main_model)
+    expect(vision_of(by_rule["control"][0]) == today.strip(),
+           "the control call carries the vision and today's anti-patterns text", today,
+           by_rule["control"][0]["last_user"][:4000])
+    bullet = "- Never round an amount in a report writer.\n"
+    added = field(vision, ANTI_PATTERNS.replace(bullet, bullet + "- " + sa + "\n"))
+    for r in (by_rule["verify"][0], by_rule["t1"][0]):
+        expect(vision_of(r) == added.strip(), "a sentence for an existing invariant is tested at "
+               "the end of that invariant's section of ANTI-PATTERNS.md, and VISION.md is "
+               "unchanged", added, r["last_user"][:4000])
+    view.shows("Draft sentence for ANTI-PATTERNS.md, under invariant 1:",
+               "a sentence for an existing invariant is offered for ANTI-PATTERNS.md")
+    for text in ("  " + sa, "Test on the turn you corrected: the check alerts with this sentence "
+                 "added.", "Test on 1 earlier turn of this session: no new alert.", CLOSING_AP):
+        view.shows(text, f"the report shows {text!r}")
+    store_has_no_draft(run, "store-ap-tested")
+
+    step("12b draft for a new invariant")
+    sb = ("Never let the exporter decide the currency of an amount, for example euros for the "
+          "totals: take the currency from the amounts module.")
+    run.reply(MARKERS["learn"], draft_reply(sb, "new"), times=1)
+    Answer(run, "learn", "learn-ap-new", "learn shows the act").shows(ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == sb, "the new-place draft")
+    rules = script_excerpts(run, B_TURNS, sb, {
+        "control": (1, "today", "verdict: none"),
+        "verify": (1, "with", deviation("invariant 3", ALERT, INSTEAD, QUOTE, NOTE)),
+        "t1": (0, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-ap-new", "learn yes tests the draft", timeout=60)
+    calls, by_rule = excerpt_calls(run, view, mark, B_TURNS, rules, sb, [0, 1], NO_INSTRUCTIONS,
+                                   main_model)
+    added = field(f"{vision.rstrip()}\n\n3. {sb}\n", ANTI_PATTERNS)
+    for r in (by_rule["verify"][0], by_rule["t1"][0]):
+        expect(vision_of(r) == added.strip(), "a sentence for a new invariant is tested as "
+               "VISION.md's invariant 3, and ANTI-PATTERNS.md is unchanged", added,
+               r["last_user"][:4000])
+    expect(vision_of(by_rule["control"][0]) == today.strip(),
+           "the control call carries today's anti-patterns text", today,
+           by_rule["control"][0]["last_user"][:4000])
+    view.shows("Draft sentence for VISION.md, as a new invariant:",
+               "a sentence for a new invariant is offered for VISION.md")
+    view.shows(CLOSING[0], "the report names only VISION.md")
+    store_has_no_draft(run, "store-ap-new-tested")
+
+    step("12c draft for an invariant that the vision does not have; the check alerts on "
+         "another invariant with the sentence")
+    sc = ("Never let the exporter pick an exchange rate, for example 1.08 for euros: "
+          "take the rate from the amounts module.")
+    run.reply(MARKERS["learn"], draft_reply(sc, "invariant 7"), times=1)
+    Answer(run, "learn", "learn-ap-7", "learn shows the act").shows(ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == sc, "the invariant-7 draft")
+    other_alert = "The exporter opens a mail connection to send the invoices."
+    rules = script_excerpts(run, B_TURNS, sc, {
+        "control": (1, "today", "verdict: none"),
+        "verify": (1, "with", deviation("invariant 2", other_alert, INSTEAD, QUOTE, NOTE)),
+        "t1": (0, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-ap-7", "learn yes tests the draft", timeout=60)
+    calls, by_rule = excerpt_calls(run, view, mark, B_TURNS, rules, sc, [0, 1], NO_INSTRUCTIONS,
+                                   main_model)
+    added = field(f"{vision.rstrip()}\n\n3. {sc}\n", ANTI_PATTERNS)
+    for r in (by_rule["verify"][0], by_rule["t1"][0]):
+        expect(vision_of(r) == added.strip(), "a sentence for an invariant that the vision does "
+               "not have is tested as VISION.md's new invariant 3, and ANTI-PATTERNS.md is "
+               "unchanged", added, r["last_user"][:4000])
+    view.shows("Draft sentence for VISION.md, as a new invariant:",
+               "a sentence for an invariant that the vision does not have is offered for "
+               "VISION.md as a new invariant")
+    view.lacks(CLOSING_AP, "the report names only VISION.md")
+    view.shows("Test on the turn you corrected: the check alerts on invariant 2, not on "
+               "invariant 3, with this sentence added. The sentence is not verified.",
+               "an alert on another invariant with the sentence added does not verify it")
+    store_has_no_draft(run, "store-ap-7-tested")
+
+    step("12d malformed replies: no result for the control, the verify and the earlier turn")
+    sd = ("Never convert a total in the exporter, for example to euros: let the amounts module "
+          "convert it.")
+    run.reply(MARKERS["learn"], draft_reply(sd, "invariant 1"), times=1)
+    Answer(run, "learn", "learn-ap-malformed", "learn shows the act").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == sd, "the draft")
+    rules = script_excerpts(run, B_TURNS, sd, {
+        "control": (1, "today", MALFORMED),
+        "verify": (1, "with", MALFORMED),
+        "t1": (0, "with", MALFORMED),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-ap-malformed", "learn yes with malformed replies",
+                  timeout=60)
+    excerpt_calls(run, view, mark, B_TURNS, rules, sd, [0, 1], NO_INSTRUCTIONS, main_model)
+    for text, what in (
+            ("Check with today's vision on the turn you corrected: " + NO_RESULT,
+             "a malformed control reply is reported as no result, and the test goes on"),
+            ("Test on the turn you corrected: " + NO_RESULT,
+             "a malformed verify reply is reported as no result"),
+            ("Test on 1 earlier turn of this session: " + NO_RESULT,
+             "an earlier test with no result on every turn is reported as no result")):
+        view.shows(text, what)
+    view.shows("Draft sentence for ANTI-PATTERNS.md, under invariant 1:",
+               "the report still offers the sentence")
+    store_has_no_draft(run, "store-ap-malformed")
+
+    step("12e neither file changes")
+    for name, data in seed.items():
+        expect((project / name).read_bytes() == data, f"{name} is byte-identical to the seed",
+               "unchanged", "changed")
+    expect(project_files(run) == files_before, "the project holds the same files",
+           json.dumps(files_before), json.dumps(project_files(run)))
+    run.requests(save="model-requests")
+    unscripted(run)
+    return ["anti-patterns learn yes: " + ", ".join(f"{r['seq']}:{r['matched']}" for r in calls)]
+
+
+def long_turn(run, prompt, answer, label):
+    """One turn whose answer is too long to wait for on the screen: waits for its start on
+    the screen, for the check request that carries the whole answer, and for the check's end
+    in the store."""
+    mark = run.last_seq()
+    started = time.time() * 1000
+    run.reply(prompt, answer, times=1, unless=[MARKERS["extract"]])
+    run.reply("<final_answer>\n" + answer[:300], "verdict: none", times=1)
+    run.send(prompt)
+    run.wait_request(lambda r: r["seq"] > mark and is_check(r) and final(answer) in r["last_user"],
+                     f"the check of {label}", timeout=60)
+    # The start of the answer scrolls out of the pane's history; its end stays.
+    run.wait(answer[-60:], timeout=30, save=label)
+    run.wait_store(lambda r: ((r.get("lastCheck") or {}).get("at", 0) >= started
+                              and r.get("checkingSince") is None
+                              and r["lastCheck"].get("outcome") == "verdict: none"),
+                   f"the check of {label} ended", timeout=60)
+
+
+def summarize_from(run, prompt):
+    """/rewind, picks the person's message `prompt`, then "Summarize from here": a compaction
+    of that message and everything after it. Clears the input that the rewind fills."""
+    run.keys("/rewind")
+    run.keys("Enter")
+    head = "Restore the code and/or conversation to the point before"
+    run.wait(head, timeout=10, visible=True, save="rewind")
+    deadline = time.monotonic() + 10
+    while ("❯ " + prompt) not in run.screen(visible=True).split(head, 1)[-1]:
+        expect(time.monotonic() < deadline, "/rewind lists the corrected turn's message",
+               prompt, run.screen(visible=True)[-2000:])
+        run.keys("Up")
+        time.sleep(0.2)
+    run.keys("Enter")
+    run.wait("Restore to the point before you sent this message", timeout=10, visible=True)
+    run.keys("Down")
+    run.wait("❯ 2. Summarize from here", timeout=10, visible=True)
+    run.keys("Enter")
+    run.wait("Summarized", timeout=60, visible=True, save="summarized")
+    # The rewind puts the message back into the input; ctrl+u clears it.
+    run.keys("C-u")
+    run.wait("❯ " + prompt, timeout=10, gone=True, visible=True)
+
+
+def compaction(run):
+    """Run D: Escape during a learn fork, an excerpt after a /compact that holds the summary,
+    a compaction from /rewind that removes the corrected turn, and a turn too long for the
+    test."""
+    run.reply(MARKERS["extract"], "none", model="haiku")
+    for n, (prompt, answer, _) in enumerate(D_TURNS):
+        script_turn(run, prompt, answer)
+        turn(run, prompt, answer, f"turn-{n + 1}", extract=True, outcome="verdict: none")
+    main_model = next(r["model"] for r in run.requests() if is_main(r))
+    facts = []
+
+    step("14a Escape during the learn fork")
+    s1 = ("Never convert an amount in the exporter, for example the euro totals: let the amounts "
+          "module convert.")
+    run.reply(MARKERS["learn"], draft_reply(s1, "invariant 1"), times=1)
+    Answer(run, "learn", "learn-waits", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s1,
+                   "a draft waits for an answer", save="store-waits")
+    run.reply(MARKERS["learn"], draft_reply(s1, "invariant 1"), times=1, delay=15)
+    mark = run.last_seq()
+    escape = Answer.__new__(Answer)
+    escape.run, escape.label = run, "learn-escape"
+    escape.mark = "❯ /course-keeper learn\n"
+    escape.sent = time.time() * 1000
+    run.send("/course-keeper learn")
+    run.wait_request(lambda r: r["seq"] > mark and is_learn(r), "the delayed learn fork")
+    run.keys("Escape")
+    run.expect_wait(ANSWER, "Escape during the learn fork ends the learn step with an answer",
+                    timeout=12, after=escape.mark, save=escape.label)
+    escape.read()
+    escape.shows(ABORTED, "Escape during the learn fork answers that the fork ended with aborted")
+    escape.lacks(ACT, "nothing of a draft is shown after Escape")
+    no_draft_kept(run, escape, "store-escape",
+                  "Escape during the learn fork keeps no draft, and the waiting one is gone")
+    Answer(run, "learn yes", "learn-yes-after-escape", "learn yes after Escape").shows(
+        NO_DRAFT, "after Escape during the learn fork, learn yes finds no draft")
+
+    step("14b an excerpt after a /compact holds the summary")
+    run.reply(COMPACT_ASK, SUMMARY, times=1)
+    run.send("/compact")
+    run.wait("Compacted", timeout=60, after="❯ /compact", save="compact")
+    for n, (prompt, answer, _) in enumerate(POST_TURNS):
+        script_turn(run, prompt, answer)
+        turn(run, prompt, answer, f"post-turn-{n + 1}", extract=True, outcome="verdict: none")
+    s2 = ("Never convert a total in the exporter, for example the March totals to euros: let "
+          "the amounts module convert.")
+    run.reply(MARKERS["learn"], draft_reply(s2, "invariant 1", quote=POST_QUOTE), times=1)
+    Answer(run, "learn", "learn-after-compact", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    record = run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s2, "the draft")
+    # The /compact keeps the turns before it in the session (Claude Code 2.1.332), so the
+    # person's messages and the earlier turns run on across it.
+    kept = [*D_TURNS, *POST_TURNS]
+    failing = len(D_TURNS) + 1
+    expect(record["learn"]["personCount"] == failing + 1, "the draft keeps the corrected turn "
+           "after the /compact", f"personCount {failing + 1}", json.dumps(record["learn"]))
+    rules = script_excerpts(run, kept, s2, {
+        "control": (failing, "today", "verdict: none"),
+        "verify": (failing, "with", deviation("invariant 1", ALERT, INSTEAD, POST_QUOTE, NOTE)),
+        "post1": (failing - 1, "with", "verdict: none"),
+        "t3": (failing - 2, "with", "verdict: none"),
+        "t2": (failing - 3, "with", "verdict: none"),
+    })
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-summary", "learn yes after the /compact",
+                  timeout=60)
+    calls, by_rule = excerpt_calls(run, view, mark, kept, rules, s2,
+                                   [failing - 3, failing - 2, failing - 1, failing],
+                                   NO_INSTRUCTIONS, main_model)
+    for name in ("control", "verify", "post1"):
+        text = by_rule[name][0]["last_user"]
+        summary = section(text, SUMMARY_HEAD, MESSAGES_HEAD)
+        expect(SUMMARY_WORDS in summary and 0 <= text.find(SUMMARY_HEAD) < text.find(MESSAGES_HEAD),
+               "an excerpt of a turn after a /compact holds the summary that replaced the "
+               "earlier conversation, before the person's messages", SUMMARY_WORDS,
+               text[text.find("# The session excerpts"):][:3000])
+    facts.append("summary section: " + json.dumps(
+        section(calls[0]["last_user"], SUMMARY_HEAD, MESSAGES_HEAD).strip()[:400]))
+    facts.append("summary in the excerpts of turns 2 and 3 (before the /compact): " + json.dumps(
+        [SUMMARY_HEAD in by_rule[name][0]["last_user"] for name in ("t2", "t3")]))
+    for text in ("Draft sentence for VISION.md, invariant 1:",
+                 "Test on the turn you corrected: the check alerts with this sentence added.",
+                 "Test on 3 earlier turns of this session: no new alert."):
+        view.shows(text, f"the report shows {text!r}")
+    store_has_no_draft(run, "store-summary-tested")
+
+    step("14c a compaction removes the corrected turn (/rewind, Summarize from here)")
+    run.reply(MARKERS["learn"], draft_reply(s2, "invariant 1", quote=POST_QUOTE), times=1)
+    Answer(run, "learn", "learn-before-rewind", "learn drafts a sentence").shows(
+        ACT, "the answer shows the act")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s2,
+                   "a draft waits for an answer", save="store-before-rewind")
+    run.reply(PARTIAL_ASK, PARTIAL_SUMMARY, times=1)
+    mark = run.last_seq()
+    summarize_from(run, POST_TURNS[1][0])
+    asks = [r for r in since(run, mark) if PARTIAL_ASK in r["last_user"]]
+    expect(len(asks) == 1, "Summarize from here sends one summary request", "1",
+           json.dumps([(r["seq"], r["matched"]) for r in since(run, mark)]))
+    # The person asks again; the new turn takes the corrected turn's number of person
+    # messages, and its answer does not hold the agent's words.
+    prompt, answer = AGAIN
+    script_turn(run, prompt, answer)
+    turn(run, prompt, answer, "turn-again", extract=True, outcome="verdict: none")
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-gone", "learn yes after the compaction")
+    calls = since(run, mark)
+    expect(not calls, "learn yes sends no model call when the corrected turn is gone", "none",
+           json.dumps([(r["seq"], r["matched"]) for r in calls]))
+    view.shows(GONE, "learn yes says that the corrected turn is no longer in the session")
+    view.lacks("Draft sentence for", "no sentence is offered for a turn that is gone")
+    no_draft_kept(run, view, "store-gone", "learn yes drops the draft when the corrected turn "
+                  "is no longer in the session")
+
+    step("14d a corrected turn too long for the test")
+    long_turn(run, LONG_TURNS[0][0], LONG_TURNS[0][1], "long-turn")
+    prompt, answer = LONG_TURNS[1]
+    script_turn(run, prompt, answer)
+    turn(run, prompt, answer, "long-correction", extract=True, outcome="verdict: none")
+    s3 = ("Never keep an exchange rate in the exporter, for example a constant for euros: take "
+          "the rate from the amounts module.")
+    act = "The agent planned to keep the euro rate as a constant in the exporter."
+    run.reply(MARKERS["learn"], draft_reply(s3, "invariant 1", quote=LONG_QUOTE, act=act), times=1)
+    view = Answer(run, "learn", "learn-long", "learn on the long turn")
+    view.shows(f"The agent's words: \"{LONG_QUOTE}\"", "the answer shows the agent's words")
+    run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == s3, "the long-turn draft",
+                   save="store-long-draft")
+    mark = run.last_seq()
+    view = Answer(run, "learn yes", "learn-yes-long", "learn yes on the long turn")
+    calls = since(run, mark)
+    expect(not calls, "learn yes sends no model call when the agent's words fall in the part "
+           "that the excerpt leaves out", "none",
+           json.dumps([(r["seq"], r["matched"]) for r in calls]))
+    for text in (TOO_LONG, "Draft sentence for VISION.md, invariant 1 (not tested):", "  " + s3,
+                 *CLOSING):
+        view.shows(text, f"the not-tested report shows {text!r}")
+    view.lacks("Test on the turn you corrected", "a turn too long for the test is not tested")
+    no_draft_kept(run, view, "store-long", "learn yes drops the draft of a turn too long for "
+                  "the test")
+
+    run.requests(save="model-requests")
+    unscripted(run)
+    return facts
+
+
+def no_vision(run):
+    """Run C: learn needs a vision and calls no model without one."""
+    mark = run.last_seq()
+    view = Answer(run, "learn", "learn-no-vision", "learn without a vision")
+    view.shows(NO_VISION, "learn without a VISION.md says that it needs one")
+    view = Answer(run, "learn " + HINT, "learn-no-vision-words", "learn with words, no vision")
+    view.shows(NO_VISION, "learn with words without a VISION.md says that it needs one")
+    calls = since(run, mark)
+    expect(not calls, "learn without a vision starts no model request", "none",
+           json.dumps([(r["seq"], r["model"]) for r in calls]))
+    record = run.store(save="store-no-vision")
+    expect(record is None or ("learn" not in record and record.get("learningSince") is None),
+           "learn without a vision keeps no draft", "no draft", json.dumps(record))
+    expect(not Path(run.dir, "scratch/project/VISION.md").exists(),
+           "learn writes no VISION.md", "absent", "present")
+
+
+if __name__ == "__main__":
+    journey(learn)

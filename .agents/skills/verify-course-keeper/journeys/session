@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Session controls: status, off, on, with the stored switch and an untouched vision.
+
+Only slash commands run, so the plugin must send no model request at all that
+carries one of its prompt markers.
+"""
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import MARKERS, expect, has, journey, step  # noqa: E402
+
+
+def session(run):
+    vision = Path(run.dir) / "scratch" / "project" / "VISION.md"
+    seed = Path(run.evidence, "vision.md").read_text()
+
+    step("status")
+    view = run.command("", "Last check:", "status-fresh")
+    expect(has(view, f"VISION.md: {vision}"), "status names the fixture vision",
+           f"VISION.md: {vision}", view)
+    expect(has(view, "Checks: on for this session."), "a fresh session has checks on",
+           "Checks: on for this session.", view)
+
+    for state in ("off", "on"):
+        step(state)
+        view = run.command(state, f"Course Keeper checks are {state} for this session.", state)
+        view = run.command("", "Last check:", "status-" + state)
+        expect(has(view, f"Checks: {state} for this session."), f"status after {state}",
+               f"Checks: {state} for this session.", view)
+        record = run.wait_store(lambda r: r["isOff"] is (state == "off"),
+                                f"isOff is {str(state == 'off').lower()}", save="store-" + state)
+        expect(record["isOff"] is (state == "off"), f"stored switch after {state}",
+               state == "off", record["isOff"])
+
+    step("vision unchanged")
+    expect(vision.read_text() == seed, "VISION.md is unchanged", seed, vision.read_text())
+
+    step("no plugin model request")
+    requests = run.requests(save="model-requests")
+    marked = [r["seq"] for r in requests
+              if any(m in r.get("last_user", "") for m in MARKERS.values())]
+    expect(not marked, "no model request carries a Course Keeper prompt marker",
+           "none", json.dumps(marked))
+    print(f"model requests while only slash commands ran: {len(requests)}")
+
+
+if __name__ == "__main__":
+    journey(session)
