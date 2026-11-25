@@ -8,7 +8,7 @@ You wrote down how your project works. One module handles money. The tool never 
 
 ![A Claude Code session. The agent proposes to round invoice totals in the exporter. Below its answer, a framed Course Keeper alert says that the session breaks invariant 1, "One module computes every amount", states what the agent is doing and what it should do instead, quotes the agent, and offers four buttons: Tell the agent, Details, False alarm and Dismiss.](docs/images/alert.png)
 
-<sub>The agent's one-line fix rounds money outside the one module that the project's rule allows. The session is staged with a scripted model reply; the Claude Code interface and the plugin are real.</sub>
+<sub>The agent's one-line fix rounds money outside the one module that the project's rule allows. The session is staged with a scripted model reply.</sub>
 
 ## Quick start
 
