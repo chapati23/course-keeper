@@ -2,9 +2,46 @@
 
 <img src=".claude-plugin/icon.png" alt="The Course Keeper icon: a ship's wheel with eight handles" width="96">
 
-Course Keeper is a Claude Code plugin. At the end of each turn of the main agent, it checks the session against the project's vision and the person's standing instructions. When the session deviates from them, it shows an alert above the prompt.
+**Course Keeper tells you when a Claude Code session drifts from your project's rules.** You write the rules once, in `VISION.md`. After each turn of the agent, Course Keeper checks the session against them, and against instructions you gave during the session. When the agent breaks one, an alert appears above the prompt.
 
-Course Keeper reports to the person. It does not deny, change or stop the agent's work ([the decision and its reason](docs/adr/0001-alert-the-person-never-act-on-the-agent.md)).
+![A Claude Code session. The agent proposes to round invoice totals in the exporter. Below its answer, a framed Course Keeper alert says that the session breaks invariant 1, "One module computes every amount", states what the agent is doing and what it should do instead, quotes the agent, and offers four buttons: Tell the agent, Details, False alarm and Dismiss.](docs/images/alert.png)
+
+<sub>The agent's shortcut puts money arithmetic outside the one module that the project's rule allows. The session is staged with a scripted model reply; the Claude Code interface and the plugin are real.</sub>
+
+## How it works
+
+1. You write `VISION.md`: what the project is, and a numbered list of rules that every change must keep.
+2. At the end of each turn of the agent, Course Keeper asks the session's model one question: did this turn break a rule, or an instruction you gave in this session?
+3. If it did, you see an alert that names the rule, says what the agent is doing and what it should do instead, and quotes the agent. Press `1` to send the note to the agent.
+
+Course Keeper reports to you. It does not deny, change or stop the agent's work ([the decision and its reason](docs/adr/0001-alert-the-person-never-act-on-the-agent.md)). When nothing deviates, it shows nothing.
+
+![The same session after "Tell the agent". A message from the course-keeper plugin carries the alert's note, and the agent answers that rounding in the exporter would break invariant 1 and that it will round in the money module.](docs/images/tell-the-agent.png)
+
+<sub>After `1: Tell the agent`, the note reaches the agent as a message from the plugin, and the agent changes its plan.</sub>
+
+## Quick start
+
+1. Install the plugin at the prompt of a Claude Code session:
+
+   ```
+   /plugin install course-keeper --marketplace chapati23/course-keeper
+   ```
+
+2. Add a `VISION.md` at the root of your repository, with one rule per number:
+
+   ```markdown
+   # Vision
+
+   A command-line tool that turns timesheets into invoices.
+
+   1. **One module computes every amount.** No other code rounds money.
+   2. **The tool never sends an invoice.** It writes files; the person sends them.
+   ```
+
+3. Run `/course-keeper`. It shows the vision file that Course Keeper found, and the alerts of this session.
+
+Each check costs one call on the session's model, and each prompt you type one small `haiku` call ([What it costs](#what-it-costs)). Without `VISION.md`, Course Keeper does nothing in that project.
 
 ## The vision
 
@@ -102,22 +139,7 @@ Each value is a path relative to the place where Course Keeper looks for the vis
 
 ## What you see
 
-When a check finds a deviation, a row above the prompt shows it. For example, in the timesheet project above:
-
-```
-── ▲ Session breaks invariant 1 · Course Keeper ──────────────────────
-  Your rule: "One module computes every amount"
-
-  What your agent is doing: The session rounds the total in the exporter,
-  which contradicts invariant 1.
-
-  What it should do instead: Call the one module for the total.
-
-  Quote: "I will round the total in the exporter before it writes the file."
-
-  1: Tell the agent · 2: Details · 3: False alarm · 4: Dismiss · ctrl+x tab
-──────────────────────────────────────────────────────────────────────
-```
+When a check finds a deviation, a row above the prompt shows it, as in [the screenshot at the top](#course-keeper).
 
 The top rule names the invariant, or says that the session breaks your instruction. The next line quotes the invariant's title, or the words of the standing instruction. The title is the invariant's bold lead in VISION.md, or else its first sentence, as the check read it; without a title the line is left out. Each part below starts with its heading in bold. The parts give one sentence about the deviation, what the invariant or the instruction asks for instead, and the evidence, a quote from the agent. The "instead" part is left out when the check gave no such text. An empty line separates the frame from the transcript above and the prompt below. The frame is at most 100 columns wide. When it would not fit the space above the prompt, it drops its empty lines; when it still does not fit, the buttons move into its first line. Either way the buttons stay in view, and their keys work. The row has four buttons:
 
