@@ -43,6 +43,8 @@ import {
   formatAlerts,
   formatInstructions,
   holdsQuote,
+  quotedRow,
+  wasShown,
   invariantTitle,
   fileName,
   fencedLines,
@@ -98,6 +100,40 @@ function alertOf(fields: Partial<CourseKeeperAlert> = {}): CourseKeeperAlert {
 }
 
 describe('the check reply', () => {
+  test('escaped quotes in the evidence come back plain', () => {
+    const reply = DEVIATION.replace(
+      /evidence: .*/,
+      String.raw`evidence: "vat = round(total * Decimal(\"0.19\"), 2)\" and \"total_with_vat = total + vat"`,
+    )
+
+    expect(parseCheckReply(reply)).toMatchObject({
+      evidence: 'vat = round(total * Decimal("0.19"), 2)" and "total_with_vat = total + vat',
+    })
+  })
+
+  test('a double backslash stays, so a quoted network path keeps its text', () => {
+    const reply = DEVIATION.replace(/evidence: .*/, String.raw`evidence: "copy it to \\server\share"`)
+
+    expect(parseCheckReply(reply)).toMatchObject({ evidence: String.raw`copy it to \\server\share` })
+  })
+
+  test('an alert stored with escaped quotes before 0.6.1 is not raised again', () => {
+    const record = {
+      ...normalizeRecord(undefined),
+      alerts: [alertOf({ evidence: String.raw`call Decimal(\"0.19\") here` })],
+    }
+
+    expect(wasShown(record, 'invariant 2', 'call Decimal("0.19") here')).toBe(true)
+  })
+
+    test('a backslash that is not before a quote stays', () => {
+    const reply = DEVIATION.replace(/evidence: .*/, String.raw`evidence: "split on \n and \d+ here"`)
+
+    expect(parseCheckReply(reply)).toMatchObject({
+      evidence: String.raw`split on \n and \d+ here`,
+    })
+  })
+
   test('a deviation is read field by field', () => {
     expect(parseCheckReply(DEVIATION)).toEqual({
       verdict: 'deviation',
@@ -786,6 +822,36 @@ function row(
 }
 
 describe('the learn reply', () => {
+  test('an escaped quote in the quote still finds the reply that holds it', () => {
+    const reply = DRAFT_REPLY.replace(
+      /^quote: .*$/m,
+      String.raw`quote: "I will call Decimal(\"0.19\") in the exporter."`,
+    )
+    const parsed = parseLearnReply(reply) as { quote: string }
+    const rows = [
+      row('user', 'Add VAT.'),
+      row('assistant', 'I will call Decimal("0.19") in the exporter.'),
+      row('user', 'No, keep money in the money module.'),
+    ]
+
+    expect(quotedRow(rows, parsed.quote)).toEqual({
+      quote: 'I will call Decimal("0.19") in the exporter.',
+      at: 1,
+    })
+  })
+
+  test("a backslash before a quote in the agent's own words still matches", () => {
+    const words = String.raw`I will run echo \"hi\" in the exporter.`
+    const rows = [
+      row('user', 'Add VAT.'),
+      row('assistant', words),
+      row('user', 'No.'),
+    ]
+
+    expect(quotedRow(rows, words)).toEqual({ quote: words, at: 1 })
+    expect(quotedRow(rows, 'words nobody wrote')).toBeUndefined()
+  })
+
   test('a draft is read field by field, fences ignored, continuation lines joined', () => {
     expect(parseLearnReply(DRAFT_REPLY)).toEqual({
       result: 'draft',

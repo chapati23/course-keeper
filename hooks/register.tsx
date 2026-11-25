@@ -34,7 +34,7 @@ import {
   earlierTurns,
   excerptCheckPrompt,
   excerptKeepsQuote,
-  failingRow,
+  quotedRow,
   failingTurnAt,
   fileNames,
   fillCheckPrompt,
@@ -689,8 +689,8 @@ async function makeDraft(
   // The quote must stand word for word in one of the agent's replies, or
   // nothing of the draft is shown.
   const rows = await $.session.messages()
-  const at = failingRow(rows, parsed.quote)
-  if (at < 0) {
+  const found = quotedRow(rows, parsed.quote)
+  if (found === undefined) {
     return (
       "The draft quoted words that are not in the agent's replies, so it is not shown. " +
       `Run /course-keeper learn again, or give the act in words.\n${GIVE_WORDS}`
@@ -698,7 +698,7 @@ async function makeDraft(
   }
   // The draft keeps the failing turn by its person message, so a later
   // reply that repeats the quote does not move it.
-  const personCount = personCountAt(rows, turnOf(rows, at).start)
+  const personCount = personCountAt(rows, turnOf(rows, found.at).start)
 
   let model = ''
   try {
@@ -706,7 +706,7 @@ async function makeDraft(
   } catch {
     // The report then names the session's model without its name.
   }
-  const draft = draftOf(parsed, await $.clock.now(), model, personCount)
+  const draft = draftOf({ ...parsed, quote: found.quote }, await $.clock.now(), model, personCount)
   // A request that took longer than CHECK_STALE_MS lost its in-flight mark,
   // and a newer request may have saved its own draft since.
   let isOwn = false

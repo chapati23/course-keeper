@@ -2,5 +2,5 @@
   "name": "course-keeper",
   "owner": { "name": "course-keeper" },
   "description": "Checks a coding session against the project's vision and the person's standing instructions, and alerts the person when it deviates.",
-  "plugins": [{ "name": "course-keeper", "source": "./" }]
+  "plugins": [{ "name": "course-keeper", "displayName": "Course Keeper", "source": "./" }]
 }

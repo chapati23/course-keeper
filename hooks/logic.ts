@@ -301,11 +301,25 @@ export function parseCheckReply(reply: string): CheckReply | undefined {
   }
 }
 
-function unquote(text: string): string {
+/**
+ * A field value with the `\"` that a model writes for a double quote inside a
+ * quote turned back into `"`. Every other backslash stays, so a quoted path
+ * such as `\\server\share` keeps its own text.
+ */
+export function unescapeQuotes(text: string): string {
+  return text.replace(/\\"/g, '"')
+}
+
+/** The text of a field value, without its outer quote marks. */
+function stripQuotes(text: string): string {
   const trimmed = text.trim()
   const match = /^["“'](.*)["”']$/s.exec(trimmed)
 
   return match ? (match[1] ?? '') : trimmed
+}
+
+function unquote(text: string): string {
+  return unescapeQuotes(stripQuotes(text))
 }
 
 function same(a: string, b: string): boolean {
@@ -322,7 +336,12 @@ export function wasShown(
 ): boolean {
   const all = record.current ? [...record.alerts, record.current] : record.alerts
 
-  return all.some(a => same(a.reference, reference) && same(a.evidence, evidence))
+  // A record from before 0.6.1 can hold evidence with the model's `\"`.
+  return all.some(
+    a =>
+      same(a.reference, reference) &&
+      same(unescapeQuotes(a.evidence), unescapeQuotes(evidence)),
+  )
 }
 
 /** Moves the current alert into the list of shown alerts, with an answer. */
@@ -1131,7 +1150,9 @@ export function parseLearnReply(reply: string): LearnReply | undefined {
   if (result === 'none') return { result: 'none', reason: field('reason') }
   if (result !== 'draft') return undefined
 
-  const quote = clean(unquote(fields.get('quote') ?? ''), LEARN_LIMITS.quote)
+  // Kept as the model wrote it: `quotedRow` decides whether its `\"` is an
+  // escape or the agent's own text.
+  const quote = clean(stripQuotes(fields.get('quote') ?? ''), LEARN_LIMITS.quote)
   const act = field('act')
   const sentence = field('sentence')
   const place = canonicalPlace(clean(fields.get('place') ?? '', Infinity))
@@ -1191,6 +1212,25 @@ export function failingRow(rows: readonly SessionMessage[], quote: string): numb
   )
 
   return before >= 0 ? before : findQuote(rows, quote)
+}
+
+/**
+ * The form of a learn quote that stands in the agent's replies, with the row
+ * that `failingRow` finds for it: the quote as the model wrote it, else with
+ * each `\"` turned into `"`. A model escapes a double quote inside the quote,
+ * but the agent's own words can hold a backslash before a quote too.
+ * Undefined when neither form is in a reply.
+ */
+export function quotedRow(
+  rows: readonly SessionMessage[],
+  quote: string,
+): { quote: string; at: number } | undefined {
+  for (const form of new Set([quote, unescapeQuotes(quote)])) {
+    const at = failingRow(rows, form)
+    if (at >= 0) return { quote: form, at }
+  }
+
+  return undefined
 }
 
 function isCompactionSummary(row: SessionMessage): boolean {
