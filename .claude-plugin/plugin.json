@@ -2,7 +2,7 @@
   "name": "course-keeper",
   "version": "0.3.3",
   "description": "Checks a coding session against the project's vision and the person's standing instructions, and alerts the person when it deviates.",
-  "author": { "name": "Course keeper authors" },
+  "author": { "name": "Course Keeper authors" },
   "license": "MIT",
   "homepage": "https://github.com/chapati23/course-keeper",
   "repository": "https://github.com/chapati23/course-keeper",

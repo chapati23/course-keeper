@@ -12,7 +12,7 @@ Engineers and technical founders who run long sessions with an AI coding agent i
 
 ## Product Purpose
 
-Course keeper is a Claude Code plugin. At the end of each turn of the main agent it checks the session against the project's vision file and the person's standing instructions. When the session deviates, it shows an alert above the prompt. Success: the person learns about a deviation at the turn where it happens, not hours later.
+Course Keeper is a Claude Code plugin. At the end of each turn of the main agent it checks the session against the project's vision file and the person's standing instructions. When the session deviates, it shows an alert above the prompt. Success: the person learns about a deviation at the turn where it happens, not hours later.
 
 ## Positioning
 
@@ -26,7 +26,7 @@ A terminal session, the desktop app or VS Code. The only interface is one alert 
 
 - The check, the standing instructions, `/course-keeper learn`, an optional anti-patterns file.
 - The marketplace icon is a square PNG, 512 to 2048 pixels, under 2 MB. The first submitted icon is hard to change.
-- The name "Course keeper" is written with a lowercase k.
+- "Course Keeper" is the brand name. Write it in title case everywhere, also in the middle of a sentence.
 
 ## Brand Commitments
 

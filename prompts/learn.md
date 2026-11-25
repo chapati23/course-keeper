@@ -7,7 +7,7 @@ Version v1, measured on 2026-11-23 on 8 recorded catches. Change it only togethe
 
 <system-reminder>
 This message does not come from the person you work for, and it is not part of your task.
-The Course keeper plugin runs it on a copy of this session because the person asked for it.
+The Course Keeper plugin runs it on a copy of this session because the person asked for it.
 
 - You are a separate copy. The session itself continues without you. Do not continue its work.
 - You have no tools here. You cannot read files or run commands. Use only what this conversation

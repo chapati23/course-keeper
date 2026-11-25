@@ -1,4 +1,4 @@
-# Course keeper
+# Course Keeper
 
 A Claude Code plugin that checks a coding session against the project's vision and the person's standing instructions, and alerts the person when the session deviates from them.
 
@@ -49,7 +49,7 @@ A deviation that the person corrected in a session and that no alert flagged fir
 _Avoid_: miss, false negative, incident
 
 **Draft sentence**:
-One sentence that starts with "Never" and names the act of a catch, offered to the owners of the vision. Course keeper does not add it to the vision.
+One sentence that starts with "Never" and names the act of a catch, offered to the owners of the vision. Course Keeper does not add it to the vision.
 _Avoid_: rule, fix, patch
 
 ### Who is involved
@@ -62,6 +62,6 @@ _Avoid_: user, operator, human
 The AI that does a session's work.
 _Avoid_: model, assistant, worker
 
-**Course keeper**:
+**Course Keeper**:
 The component that runs checks and raises alerts. It reports to the person and does not act on the agent's work.
 _Avoid_: observer, advisor, monitor, sidecar, guard

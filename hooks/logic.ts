@@ -1,4 +1,4 @@
-// The parts of course keeper that need no engine: origin decision, text
+// The parts of Course Keeper that need no engine: origin decision, text
 // cleaning, prompt filling, reply parsing and the list rules. The hooks
 // module calls these; the tests call them directly.
 
@@ -331,9 +331,10 @@ export function answerCurrent(
   answer: CourseKeeperAnswer,
 ): CourseKeeperSession {
   if (record.current === null) return record
+  const { confirmFalseAlarm: _, ...rest } = record
 
   return {
-    ...record,
+    ...rest,
     alerts: [...record.alerts, { ...record.current, answer }].slice(-MAX_ALERTS),
     current: null,
     showDetails: false,
@@ -535,7 +536,7 @@ export function compactInstructions(
 /** The message to the agent that "Tell the agent" sends. */
 export function noteText(alert: CourseKeeperAlert): string {
   return (
-    `Course keeper alert on ${alert.reference}. ` +
+    `Course Keeper alert on ${alert.reference}. ` +
     `Evidence: "${alert.evidence}". Note: ${alert.note}`
   )
 }
@@ -579,7 +580,7 @@ export function invariantTitle(vision: string, reference: string): string | unde
 }
 
 /**
- * What the alert's headline says after "Course keeper: ", from its
+ * What the alert's headline says after "Course Keeper: ", from its
  * reference and the title stored with it.
  */
 export function alertSubject(alert: CourseKeeperAlert): string {
@@ -598,7 +599,47 @@ export function alertSubject(alert: CourseKeeperAlert): string {
 
 /** The alert's headline, as the row and the desktop notification show it. */
 export function alertHeadline(alert: CourseKeeperAlert): string {
-  return `Course keeper: ${alertSubject(alert)}`
+  return `Course Keeper: ${alertSubject(alert)}`
+}
+
+/**
+ * The words in the row's top rule: what the session breaks, without the
+ * invariant's title or the instruction's words (the next line holds those).
+ */
+export function alertBanner(alert: CourseKeeperAlert): string {
+  if (/^instruction "/.test(alert.reference)) return 'Session breaks your instruction'
+
+  return `Session breaks ${alert.reference}`
+}
+
+/**
+ * The line under the top rule: the invariant's title or the instruction's
+ * words, quoted. Undefined for an invariant whose title is not stored.
+ */
+export function alertRule(
+  alert: CourseKeeperAlert,
+): { label: string; words: string } | undefined {
+  const instruction = /^instruction "(.*)$/.exec(alert.reference)
+  if (instruction) {
+    const words = clean((instruction[1] ?? '').replace(/"$/, ''), MAX_HEADLINE_PART)
+
+    return { label: 'Your instruction', words }
+  }
+  if (/^invariant \d+$/.test(alert.reference) && alert.title !== undefined) {
+    return { label: 'Your rule', words: alert.title }
+  }
+
+  return undefined
+}
+
+/**
+ * A horizontal rule `width` cells wide, with `title` after its first two
+ * dashes when one is given. A title too long for the width is drawn whole.
+ */
+export function ruleLine(width: number, title?: string): string {
+  const head = title === undefined ? '' : `── ${title} `
+
+  return head + '─'.repeat(Math.max(width - head.length, 2))
 }
 
 /** The notice shown when standing instructions are added. */
@@ -606,8 +647,8 @@ export function addedNotice(added: readonly string[]): string {
   const quoted = added.map(text => `"${clean(text, 80)}"`).join('; ')
 
   return added.length === 1
-    ? `Course keeper noted a standing instruction: ${quoted}`
-    : `Course keeper noted ${added.length} standing instructions: ${quoted}`
+    ? `Course Keeper noted a standing instruction: ${quoted}`
+    : `Course Keeper noted ${added.length} standing instructions: ${quoted}`
 }
 
 function time(ms: number): string {
@@ -907,6 +948,9 @@ export function normalizeRecord(value: unknown): CourseKeeperSession {
     alerts,
     current: current === null ? null : { ...current, answer: null },
     showDetails: value.showDetails === true && current !== null,
+    ...(value.confirmFalseAlarm === true && current !== null
+      ? { confirmFalseAlarm: true }
+      : {}),
     lastCheck,
     checkingSince:
       typeof value.checkingSince === 'number' && Number.isFinite(value.checkingSince)
@@ -1642,7 +1686,7 @@ export const GIVE_WORDS =
 /** The answer to `/course-keeper learn` when the draft's quote was found. */
 export function draftText(draft: CourseKeeperDraft): string {
   return [
-    'Course keeper read this as the act you corrected:',
+    'Course Keeper read this as the act you corrected:',
     `  ${draft.act}`,
     `The agent's words: "${draft.quote}"`,
     '',
@@ -1743,11 +1787,11 @@ function closingLines(
     '',
     `Where it comes from: the agent's words "${draft.quote}"; drafted ${date} UTC by ` +
       `${draft.model || "the session's model"}` +
-      `${version === undefined ? '' : `; course keeper ${version}`}.`,
+      `${version === undefined ? '' : `; Course Keeper ${version}`}.`,
     '',
     inAntiPatterns
-      ? `This is a draft for the owners of ${names.antiPatterns} and ${names.vision}. Course keeper does not change the files.`
-      : `This is a draft for the owners of ${names.vision}. Course keeper does not change the file.`,
+      ? `This is a draft for the owners of ${names.antiPatterns} and ${names.vision}. Course Keeper does not change the files.`
+      : `This is a draft for the owners of ${names.vision}. Course Keeper does not change the file.`,
     '- An alert in the test does not prove that the sentence names the right act. Compare it with what you corrected.',
     '- Widen or narrow it before you add it. In a measurement on 8 recorded catches, 4 of 16 drafts were',
     '  too broad and 4 too narrow.',

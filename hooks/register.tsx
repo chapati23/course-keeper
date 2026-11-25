@@ -1,8 +1,8 @@
-// Course keeper: checks the main agent's work against the project's vision
+// Course Keeper: checks the main agent's work against the project's vision
 // and the person's standing instructions at the end of each turn, and
 // alerts the person when the session deviates from them.
 //
-// Every hook passes its event on and catches its own errors. Course keeper
+// Every hook passes its event on and catches its own errors. Course Keeper
 // never denies or rewrites a tool call and never rewrites the person's
 // prompt. The only event it changes is `session.compact`, where it adds to
 // the summarizer's instructions.
@@ -17,7 +17,8 @@ import {
   addWithdrawn,
   addedNotice,
   alertHeadline,
-  alertSubject,
+  alertBanner,
+  alertRule,
   alertsOn,
   answerCurrent,
   antiPatternsDirective,
@@ -55,6 +56,7 @@ import {
   personCountAt,
   removeWithdrawn,
   restoreUnsent,
+  ruleLine,
   sessionExcerpt,
   shouldExtract,
   statusText,
@@ -206,7 +208,7 @@ async function change(
       return next
     }
   }
-  throw new Error('course keeper: the session record kept changing')
+  throw new Error('Course Keeper: the session record kept changing')
 }
 
 async function readPrompt(
@@ -359,7 +361,7 @@ async function check($: $, trigger: 'turn' | 'command'): Promise<string> {
   try {
     return await runCheck($, id, trigger, turn, started)
   } catch {
-    return record($, id, 'did not run: course keeper failed (a prompt file or a call)')
+    return record($, id, 'did not run: Course Keeper failed (a prompt file or a call)')
   } finally {
     await change($, id, r =>
       r.checkingSince === started ? { ...r, checkingSince: null } : r,
@@ -468,7 +470,7 @@ async function notePrompt(
   await change($, id, r => (r.hasPerson ? r : { ...r, hasPerson: true }))
   if (!shouldExtract(text, isCommand, isMeta)) return
   // Without a vision no check runs, so nothing would use the instruction:
-  // in such a project course keeper sends nothing to any model.
+  // in such a project Course Keeper sends nothing to any model.
   if ((await readVision($)) === undefined) return
 
   const template = await readPrompt($, 'extract')
@@ -526,15 +528,15 @@ async function runCommand($: $, args: string): Promise<string> {
       // The answer waits for the store, so a quit right after keeps the change.
       await saving
 
-      return 'Course keeper checks are off for this session.'
+      return 'Course Keeper checks are off for this session.'
     case 'on':
       await change($, id, r => (r.isOff ? { ...r, isOff: false } : r))
       await saving
 
-      return 'Course keeper checks are on for this session.'
+      return 'Course Keeper checks are on for this session.'
     case 'learn':
       return learn($, args.trim().slice(verb.length).trim()).catch(
-        () => 'Course keeper could not finish the learn step.',
+        () => 'Course Keeper could not finish the learn step.',
       )
     case 'forget': {
       let removed: string | undefined
@@ -620,7 +622,7 @@ async function learn($: $, words: string): Promise<string> {
       ? await testDraft($, id, vision, started)
       : await makeDraft($, id, fieldOf(vision), words, turn, started)
   } catch {
-    return 'Course keeper could not finish the learn step: a prompt file or a call failed.'
+    return 'Course Keeper could not finish the learn step: a prompt file or a call failed.'
   } finally {
     await change($, id, r =>
       r.learningSince === started ? { ...r, learningSince: null } : r,
@@ -780,7 +782,7 @@ async function testDraft(
     model = await $.session.model()
   } catch {
     return (
-      "The test could not run: course keeper could not read the session's model. " +
+      "The test could not run: Course Keeper could not read the session's model. " +
       'The draft still waits; run /course-keeper learn yes again.'
     )
   }
@@ -890,6 +892,38 @@ async function pluginVersion($: $): Promise<string | undefined> {
   }
 }
 
+/** The widest the alert's frame is drawn, in cells. */
+const MAX_ROW_WIDTH = 100
+
+/**
+ * About how many rows the alert's frame takes with its empty lines, at
+ * `width` cells: the two rules, the rule line, each part's empty line
+ * and its heading and text wrapped together, and the actions.
+ */
+function frameRows(width: number, hasRule: boolean, parts: readonly string[]): number {
+  const text = Math.max(width - 4, 10)
+  // An empty line, then the heading (at most 27 cells) and the text.
+  const body = parts.reduce((rows, part) => rows + 1 + Math.ceil((part.length + 27) / text), 0)
+  const actions = 1 + Math.ceil(75 / width)
+
+  return 2 + (hasRule ? 1 : 0) + body + actions
+}
+
+/**
+ * "False alarm": the first press asks for a second one, the second records
+ * the answer. A false alarm tells later checks to skip the deviation, so one
+ * stray key does not record it.
+ */
+async function falseAlarm($: $, id: string, shownAt: number) {
+  return change($, id, r => {
+    if (r.current?.shownAt !== shownAt) return r
+
+    return r.confirmFalseAlarm === true
+      ? answerCurrent(r, 'intended')
+      : { ...r, confirmFalseAlarm: true }
+  })
+}
+
 /** Answers the current alert, if it is still the one the person saw. */
 async function answer(
   $: $,
@@ -928,7 +962,7 @@ async function tell($: $, id: string, shownAt: number) {
   if (isSent) return
 
   await change($, id, r => restoreUnsent(r, shownAt))
-  $.ui.toast('Course keeper could not send the note to the agent. The alert is shown again.')
+  $.ui.toast('Course Keeper could not send the note to the agent. The alert is shown again.')
 }
 
 export const register: Register = (on, options) => {
@@ -940,7 +974,7 @@ export const register: Register = (on, options) => {
       await $.command.register({
         name: 'course-keeper',
         description:
-          'Course keeper: show the vision, standing instructions and alerts',
+          'Course Keeper: show the vision, standing instructions and alerts',
         argumentHint:
           '[check | forget <n> | off | on | learn [yes | cancel | <what went wrong>]]',
       })
@@ -957,7 +991,7 @@ export const register: Register = (on, options) => {
     const entered = await next(e)
     try {
       if (entered.drop === undefined && isPersonOrigin(e.origin.kind)) {
-        // Not awaited: the prompt does not wait for course keeper.
+        // Not awaited: the prompt does not wait for Course Keeper.
         void notePrompt(
           $,
           entered.text,
@@ -966,7 +1000,7 @@ export const register: Register = (on, options) => {
         ).catch(() => undefined)
       }
     } catch {
-      // Ignore: course keeper never holds up a prompt.
+      // Ignore: Course Keeper never holds up a prompt.
     }
 
     return entered
@@ -988,7 +1022,7 @@ export const register: Register = (on, options) => {
         }
       }
     } catch {
-      // Ignore: course keeper never holds up a turn.
+      // Ignore: Course Keeper never holds up a turn.
     }
 
     return next(e)
@@ -1000,7 +1034,7 @@ export const register: Register = (on, options) => {
       if (e.agentId === undefined) {
         const { record: held } = await load($, await $.session.id())
         const instructions = compactInstructions(e.instructions, held.instructions)
-        // Without a vision course keeper does nothing in the project.
+        // Without a vision Course Keeper does nothing in the project.
         if (instructions !== undefined && (await readVision($)) !== undefined) {
           passed = { ...e, instructions }
         }
@@ -1016,7 +1050,7 @@ export const register: Register = (on, options) => {
     text: await runCommand($, e.args),
     isTextDisplayOnly: true,
   })).catch(() => ({
-    text: 'Course keeper could not run that command.',
+    text: 'Course Keeper could not run that command.',
     isTextDisplayOnly: true,
   }))
 
@@ -1030,66 +1064,109 @@ export const register: Register = (on, options) => {
         if (shown !== null) {
           const { Box, Button, Text } = $.ui.resolve(e)
           const at = shown.shownAt
+          // The frame is at most MAX_ROW_WIDTH cells wide, so that long
+          // sentences wrap at a reading width.
+          const width = Math.max(Math.min(e.props.bodyColumns, MAX_ROW_WIDTH), 20)
+          const banner = alertBanner(shown)
+          const rule = alertRule(shown)
+          const confirming = held.confirmFalseAlarm === true
+          // `── ▲ <banner> · Course Keeper ───…`, as one line of Texts.
+          const titled = `▲ ${banner} · Course Keeper`
+          const fill = ruleLine(width, titled).slice(`── ${titled}`.length)
           // Text between the plain Buttons only separates them: it takes no
           // focus, and each Button keeps its hotkey.
           const dot = <Text dimColor> · </Text>
+          const parts = [
+            shown.alert,
+            shown.instead ?? '',
+            shown.evidence,
+            held.showDetails ? shown.note : '',
+          ].filter(text => text !== '')
+          // Without the empty lines when the frame would not fit the band:
+          // a Button scrolled out of view does not answer its hotkey.
+          const compact = frameRows(width, rule !== undefined, parts) > e.props.maxRows
+          const space = compact ? 0 : 1
+          // A heading in bold and its text on the same line, wrapped at the
+          // frame's width.
+          const part = (key: string, heading: string, body: string, dim?: true) => (
+            <Box key={key} marginTop={space}>
+              <Text>
+                <Text bold>{heading}:</Text>{' '}
+                <Text dimColor={dim}>{body}</Text>
+              </Text>
+            </Box>
+          )
           tree = (
-            <Box flexDirection="column">
+            <Box flexDirection="column" width={width}>
               <Box flexDirection="row">
+                <Text dimColor>── </Text>
                 <Text color="warning">▲ </Text>
-                <Text bold>Course keeper</Text>
-                <Text>: {alertSubject(shown)}</Text>
+                <Text bold>{banner}</Text>
+                <Text dimColor> · Course Keeper{fill}</Text>
               </Box>
-              <Text>- {shown.alert}</Text>
-              {shown.instead !== undefined && shown.instead !== '' && (
-                <Text>- Instead: {shown.instead}</Text>
-              )}
-              {shown.evidence !== '' && <Text dimColor>- Evidence: "{shown.evidence}"</Text>}
-              {held.showDetails && <Text dimColor>- For the agent: {shown.note}</Text>}
-              <Box flexDirection="row">
-                <Button
-                  key="details"
-                  plain
-                  hotkey="1"
-                  label="Details"
-                  onPress={() =>
-                    change($, id, r =>
-                      r.current?.shownAt === at
-                        ? { ...r, showDetails: !r.showDetails }
-                        : r,
-                    ).catch(() => undefined)
-                  }
-                />
-                {dot}
-                <Button
-                  key="tell"
-                  plain
-                  hotkey="2"
-                  label="Tell the agent"
-                  onPress={() => tell($, id, at).catch(() => undefined)}
-                />
-                {dot}
-                <Button
-                  key="false-alarm"
-                  plain
-                  hotkey="3"
-                  label="False alarm"
-                  onPress={() =>
-                    answer($, id, at, 'intended').catch(() => undefined)
-                  }
-                />
-                {dot}
-                <Button
-                  key="dismiss"
-                  plain
-                  hotkey="4"
-                  label="Dismiss"
-                  role="dismiss"
-                  onPress={() =>
-                    answer($, id, at, 'dismissed').catch(() => undefined)
-                  }
-                />
+              <Box flexDirection="column" paddingLeft={2}>
+                {rule !== undefined && (
+                  <Box flexDirection="row">
+                    <Text>{rule.label}: </Text>
+                    <Text bold>"{rule.words}"</Text>
+                  </Box>
+                )}
+                {part('doing', 'What your agent is doing', shown.alert)}
+                {shown.instead !== undefined &&
+                  shown.instead !== '' &&
+                  part('instead', 'What it should do instead', shown.instead)}
+                {shown.evidence !== '' &&
+                  part('quote', 'Quote', `"${shown.evidence}"`, true)}
+                {held.showDetails &&
+                  part('note', 'For the agent', shown.note, true)}
+                <Box flexDirection="row" flexWrap="wrap" marginTop={space}>
+                  <Button
+                    key="tell"
+                    plain
+                    hotkey="1"
+                    label="Tell the agent"
+                    autoFocus
+                    onPress={() => tell($, id, at).catch(() => undefined)}
+                  />
+                  {dot}
+                  <Button
+                    key="details"
+                    plain
+                    hotkey="2"
+                    label="Details"
+                    onPress={() =>
+                      change($, id, r =>
+                        r.current?.shownAt === at
+                          ? { ...r, showDetails: !r.showDetails }
+                          : r,
+                      ).catch(() => undefined)
+                    }
+                  />
+                  {dot}
+                  <Button
+                    key="false-alarm"
+                    plain
+                    hotkey="3"
+                    label={confirming ? 'Confirm false alarm' : 'False alarm'}
+                    onPress={() =>
+                      falseAlarm($, id, at).catch(() => undefined)
+                    }
+                  />
+                  {dot}
+                  <Button
+                    key="dismiss"
+                    plain
+                    hotkey="4"
+                    label="Dismiss"
+                    role="dismiss"
+                    onPress={() =>
+                      answer($, id, at, 'dismissed').catch(() => undefined)
+                    }
+                  />
+                  <Text dimColor> · ctrl+x tab</Text>
+                </Box>
               </Box>
+              <Text dimColor>{ruleLine(width)}</Text>
             </Box>
           )
         }

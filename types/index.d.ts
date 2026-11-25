@@ -1,4 +1,4 @@
-// The values course keeper keeps in `$.state`, one record per session id.
+// The values Course Keeper keeps in `$.state`, one record per session id.
 // Old records can hold other shapes: the module validates every read
 // (normalizeRecord in hooks/logic.ts).
 
@@ -79,7 +79,7 @@ export type CourseKeeperDraft = {
   personCount: number
 }
 
-/** Everything course keeper keeps for one session. */
+/** Everything Course Keeper keeps for one session. */
 export type CourseKeeperSession = {
   /** The record's shape version. */
   v: 1
@@ -101,6 +101,12 @@ export type CourseKeeperSession = {
   current: CourseKeeperAlert | null
   /** True while the person has opened the note with Details. */
   showDetails: boolean
+  /**
+   * True after the first press of "False alarm": the row asks the person to
+   * press it again. Absent or false otherwise, and in a record written
+   * before this field existed.
+   */
+  confirmFalseAlarm?: boolean
   lastCheck: CourseKeeperCheck | null
   /**
    * When the check in flight started, in milliseconds since the epoch; null
