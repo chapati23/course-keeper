@@ -294,6 +294,15 @@ const ROW = [
   '',
 ]
 
+/** The same alert as a surface that draws its own controls shows it: a card. */
+const CARD = [
+  'Session breaks invariant 1· Course Keeper',
+  'Your rule: "One service sets every price"',
+  '1: Tell the agent2: Details3: False alarm4: Dismiss',
+  'What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
+  'Quote: "I will add a fallback price table in the client."',
+]
+
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
   const { clock, forks } = world(on, () => DEVIATION)
 
@@ -310,11 +319,12 @@ test('a turn ends, the check finds a deviation, the band shows it, Dismiss clear
   expect(forks[0]).toContain('None listed. Use what the person said in this session.')
   expect(forks[0]).toContain('Alerts:\nNone.')
 
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await rowLines(ui)).toEqual(ROW)
-    await ui.unmount()
-  }
+  const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await rowLines(terminal)).toEqual(ROW)
+  await terminal.unmount()
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await rowLines(desktop)).toEqual(CARD)
+  await desktop.unmount()
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'dismiss' })
@@ -511,16 +521,53 @@ test('an instead field draws as its own part between the alert and the quote', a
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await rowLines(ui)).toEqual([
-      ...ROW.slice(0, 5),
-      '',
-      '  What it should do instead: Move the table into the price service.',
-      ...ROW.slice(5),
-    ])
+    expect(await rowLines(ui)).toEqual(
+      surface === 'terminal'
+        ? [
+            ...ROW.slice(0, 5),
+            '',
+            '  What it should do instead: Move the table into the price service.',
+            ...ROW.slice(5),
+          ]
+        : [
+            ...CARD.slice(0, 4),
+            'What it should do instead: Move the table into the price service.',
+            ...CARD.slice(4),
+          ],
+    )
     // Not dim: it weighs as much as the alert.
     expect((await ui.find({ type: 'Text', text: /^Move the table into/ }))?.props.dimColor).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('on desktop the card keeps its order with Details open, takes no focus first and marks Tell the agent as the main action', async ($, on) => {
+  const { clock } = world(on, () =>
+    DEVIATION.replace('evidence: "I will add a fallback', 'evidence: "I will **add** a `fallback`'),
+  )
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  // A band too short for the terminal frame does not reorder the card.
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, maxRows: 5 } })
+  await ui.press({ key: 'details' })
+  const lines = await rowLines(ui)
+  expect(lines[0]).toBe('Session breaks invariant 1· Course Keeper')
+  // The buttons stay right under the headline and the rule, inside a short band's window.
+  expect(lines[2]).toBe('1: Tell the agent2: Hide details3: False alarm4: Dismiss')
+  expect(lines[lines.length - 1]).toMatch(/^For the agent: /)
+  expect(lines.some(l => l.startsWith('For the agent: '))).toBe(true)
+  // The quote reads as the transcript shows it, without Markdown marks.
+  expect(lines).toContain('Quote: "I will add a fallback price table in the client."')
+  expect(lines.join('\n')).not.toContain('ctrl+x tab')
+  expect(lines.join('\n')).not.toContain('─')
+  const tell = await ui.find({ key: 'tell' })
+  expect(tell?.props.variant).toBe('primary')
+  expect(tell?.props.autoFocus).toBeUndefined()
+  await ui.unmount()
 })
 
 test('an instruction reference quotes the words in the headline', async ($, on) => {
@@ -574,7 +621,9 @@ test('an alert stored before alerts kept a title still draws, without a title', 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     // No title: no "Your rule" line.
-    expect(await rowLines(ui)).toEqual([ROW[0], ROW[1], ...ROW.slice(3)])
+    expect(await rowLines(ui)).toEqual(
+      surface === 'terminal' ? [ROW[0], ROW[1], ...ROW.slice(3)] : [CARD[0], ...CARD.slice(2)],
+    )
     await ui.unmount()
   }
 })
