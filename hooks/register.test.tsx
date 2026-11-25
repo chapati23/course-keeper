@@ -298,9 +298,9 @@ const ROW = [
 const CARD = [
   'Session breaks invariant 1· Course Keeper',
   'Your rule: "One service sets every price"',
+  '1: Tell the agent2: Details3: False alarm4: Dismiss',
   'What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
   'Quote: "I will add a fallback price table in the client."',
-  '1: Tell the agent2: Details3: False alarm4: Dismiss',
 ]
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -530,9 +530,9 @@ test('an instead field draws as its own part between the alert and the quote', a
             ...ROW.slice(5),
           ]
         : [
-            ...CARD.slice(0, 3),
+            ...CARD.slice(0, 4),
             'What it should do instead: Move the table into the price service.',
-            ...CARD.slice(3),
+            ...CARD.slice(4),
           ],
     )
     // Not dim: it weighs as much as the alert.
@@ -556,7 +556,9 @@ test('on desktop the card keeps its order with Details open, takes no focus firs
   await ui.press({ key: 'details' })
   const lines = await rowLines(ui)
   expect(lines[0]).toBe('Session breaks invariant 1· Course Keeper')
-  expect(lines[lines.length - 1]).toBe('1: Tell the agent2: Hide details3: False alarm4: Dismiss')
+  // The buttons stay right under the headline and the rule, inside a short band's window.
+  expect(lines[2]).toBe('1: Tell the agent2: Hide details3: False alarm4: Dismiss')
+  expect(lines[lines.length - 1]).toMatch(/^For the agent: /)
   expect(lines.some(l => l.startsWith('For the agent: '))).toBe(true)
   // The quote reads as the transcript shows it, without Markdown marks.
   expect(lines).toContain('Quote: "I will add a fallback price table in the client."')

@@ -454,6 +454,12 @@ describe('the quote', () => {
   test('keeps underscores and stars that are not emphasis', () => {
     expect(plainQuote('set max_fee_bps to 2 * 3')).toBe('set max_fee_bps to 2 * 3')
   })
+
+  test('keeps the text of a code span exactly', () => {
+    expect(plainQuote('read `obj.__dict__` and `**kwargs` **now**')).toBe(
+      'read obj.__dict__ and **kwargs now',
+    )
+  })
 })
 
 describe('the standing instructions', () => {

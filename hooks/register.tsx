@@ -986,8 +986,8 @@ const WARNING_MARK =
 /**
  * The alert on a surface that draws its own controls (the desktop app, VS
  * Code, a phone): a card with the app's border and spacing, the headline as
- * its one strong line, then the parts, then the buttons. The order never
- * changes, so Details does not move the buttons; the band scrolls a tall card.
+ * its one strong line, the rule, the buttons, then the parts. The order never changes,
+ * so Details does not move the buttons; the band scrolls a tall card.
  */
 function alertCard(
   { Box, Button, Text, Svg }: Pick<Elements['desktop'], 'Box' | 'Button' | 'Text' | 'Svg'>,
@@ -999,10 +999,8 @@ function alertCard(
 ): JSX.Element {
   const rule = alertRule(shown)
   const confirming = held.confirmFalseAlarm === true
-  // A long part ends in an ellipsis, so the buttons stay near the top of a
-  // short band; "Tell the agent" still sends the whole note.
   const part = (key: string, label: string, body: string, quiet?: true) => (
-    <Text key={key} dimColor={quiet} maxLines={3}>
+    <Text key={key} dimColor={quiet}>
       <Text dimColor>{label}: </Text>
       {body}
     </Text>
@@ -1028,14 +1026,9 @@ function alertCard(
           <Text bold>"{rule.words}"</Text>
         </Text>
       )}
-      {part('doing', 'What your agent is doing', shown.alert)}
-      {shown.instead !== undefined &&
-        shown.instead !== '' &&
-        part('instead', 'What it should do instead', shown.instead)}
-      {shown.evidence !== '' &&
-        part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
-      {held.showDetails && part('note', 'For the agent', shown.note, true)}
-      {/* No Button takes the focus first: a stray Enter sends nothing. */}
+      {/* The buttons sit under the headline and the rule, so they stay in a short band's
+          window, where their keys answer. No Button takes the focus first:
+          a stray Enter sends nothing. */}
       <Box flexDirection="row" flexWrap="wrap" gap="xs">
         <Button
           key="tell"
@@ -1068,6 +1061,13 @@ function alertCard(
           onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
         />
       </Box>
+      {part('doing', 'What your agent is doing', shown.alert)}
+      {shown.instead !== undefined &&
+        shown.instead !== '' &&
+        part('instead', 'What it should do instead', shown.instead)}
+      {shown.evidence !== '' &&
+        part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
+      {held.showDetails && part('note', 'For the agent', shown.note, true)}
     </Box>
   )
 }

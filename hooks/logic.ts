@@ -635,13 +635,20 @@ export function alertRule(
 /**
  * The agent's words without Markdown's inline marks, as the person read them
  * in the transcript: `**bold**`, `__bold__`, `*em*`, `_em_` and `` `code` ``
- * keep their text. An underscore inside a word (`snake_case`) stays.
+ * keep their text. A code span keeps its text exactly (`obj.__dict__`), and
+ * an underscore inside a word (`snake_case`) stays.
  */
 export function plainQuote(text: string): string {
+  const prose = (part: string) =>
+    part
+      .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+      .replace(/(^|[\s(["'])([*_])(?=\S)([^*_]+?)(?<=\S)\2(?=[\s.,;:!?)"']|$)/g, '$1$3')
+
+  // Odd pieces are code spans: their backticks go, their text stays as is.
   return text
-    .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/(^|[\s(["'])([*_])(?=\S)([^*_]+?)(?<=\S)\2(?=[\s.,;:!?)"']|$)/g, '$1$3')
+    .split(/`([^`]+)`/)
+    .map((part, i) => (i % 2 === 1 ? part : prose(part)))
+    .join('')
 }
 
 /** A horizontal rule `width` cells wide, at least two cells. */
