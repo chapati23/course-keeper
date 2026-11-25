@@ -1072,7 +1072,7 @@ export const register: Register = (on, options) => {
           const confirming = held.confirmFalseAlarm === true
           // `── ▲ <banner> · Course Keeper ───…`, as one line of Texts.
           const titled = `▲ ${banner} · Course Keeper`
-          const fill = ruleLine(width, titled).slice(`── ${titled}`.length)
+          const fill = ' ' + ruleLine(width - `── ${titled} `.length)
           // Text between the plain Buttons only separates them: it takes no
           // focus, and each Button keeps its hotkey.
           const dot = <Text dimColor> · </Text>

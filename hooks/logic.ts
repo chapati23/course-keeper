@@ -632,14 +632,9 @@ export function alertRule(
   return undefined
 }
 
-/**
- * A horizontal rule `width` cells wide, with `title` after its first two
- * dashes when one is given. A title too long for the width is drawn whole.
- */
-export function ruleLine(width: number, title?: string): string {
-  const head = title === undefined ? '' : `── ${title} `
-
-  return head + '─'.repeat(Math.max(width - head.length, 2))
+/** A horizontal rule `width` cells wide, at least two cells. */
+export function ruleLine(width: number): string {
+  return '─'.repeat(Math.max(width, 2))
 }
 
 /** The notice shown when standing instructions are added. */
