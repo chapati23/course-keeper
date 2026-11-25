@@ -20,6 +20,7 @@ import {
   alertBanner,
   alertRule,
   plainQuote,
+  retried,
   alertsOn,
   answerCurrent,
   antiPatternsDirective,
@@ -979,6 +980,13 @@ async function tell($: $, id: string, shownAt: number) {
   $.ui.toast('Course Keeper could not send the note to the agent. The alert is shown again.')
 }
 
+/**
+ * The rows the card takes in the band with its sentence above the buttons:
+ * the headline and the sentence at up to two and three lines, the buttons,
+ * and the border, padding and gaps. A shorter band moves the buttons up.
+ */
+const CARD_ROWS = 10
+
 /** The Course Keeper wheel, as in docs/icon.svg with rounded corners: the card's mark. */
 const LOGO_MARK =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" ><rect width="1024" height="1024" rx="230" fill="#0F3B36"/><g transform="translate(512 512) scale(1.22)" fill="#F4F0E6"><circle r="188" fill="none" stroke="#F4F0E6" stroke-width="60"/><circle r="82"/><g transform="rotate(0)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(45)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(90)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(135)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(180)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(225)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(270)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g><g transform="rotate(315)"><rect x="-13" y="-170" width="26" height="100"/><ellipse cx="0" cy="-122" rx="26" ry="33"/><rect x="-14" y="-250" width="28" height="40"/><ellipse cx="0" cy="-272" rx="36" ry="40"/><rect x="-11" y="-320" width="22" height="22"/><circle cx="0" cy="-328" r="24"/></g></g></svg>'
@@ -1003,15 +1011,16 @@ function alertCard(
   held: CourseKeeperSession,
   shown: CourseKeeperAlert,
   at: number,
+  maxRows: number,
 ): JSX.Element {
   const rule = alertRule(shown)
   const confirming = held.confirmFalseAlarm === true
   const isInstruction = /^instruction "/.test(shown.reference)
-  // "Breaks your rule “…”", or the banner when no title is stored.
+  // "Breaks rule: “…”", or the banner when no title is stored.
   const headline =
     rule === undefined
       ? alertBanner(shown)
-      : `Breaks ${isInstruction ? 'your instruction' : 'your rule'} \u201c${rule.words}\u201d`
+      : `Breaks ${isInstruction ? 'instruction' : 'rule'}: \u201c${rule.words}\u201d`
   // The headline names the reference itself when no title is stored.
   const reference = isInstruction || rule === undefined
     ? 'Course Keeper'
@@ -1022,6 +1031,16 @@ function alertCard(
       {body}
     </Text>
   )
+
+  // Closed, the sentence keeps to three lines; Details shows it whole.
+  const doing = (
+    <Text key="doing" maxLines={held.showDetails ? undefined : 3}>
+      {shown.alert}
+    </Text>
+  )
+  // In a short band the buttons come right under the headline, so they
+  // stay in view; the sentence follows them.
+  const tight = maxRows < CARD_ROWS
 
   return (
     <Box
@@ -1037,8 +1056,9 @@ function alertCard(
         <Box flexGrow={1}>
           <Text weight="semibold">{headline}</Text>
         </Box>
-        {/* A Button draws only text, so the close mark is a character; the
-            label names it for a screen reader. */}
+        {/* A Button draws only text, so the close mark is a character. It
+            has no label: the app draws a Button's label in place of its
+            text, which would replace the mark with a word. */}
         <Button
           key="dismiss"
           role="dismiss"
@@ -1047,11 +1067,7 @@ function alertCard(
           {'\u2715'}
         </Button>
       </Box>
-      {/* Closed, the sentence keeps to three lines, so a long one cannot push
-          the buttons out of a short band; Details shows it whole. */}
-      <Text key="doing" maxLines={held.showDetails ? undefined : 3}>
-        {shown.alert}
-      </Text>
+      {!tight && doing}
       <Box flexDirection="row" flexWrap="wrap" gap="xs" alignItems="center">
         <Button
           key="tell"
@@ -1071,11 +1087,11 @@ function alertCard(
               // view. The card is redrawn after the write, so the parts may
               // not exist yet: try again for about a second.
               if (done.current?.shownAt === at && done.showDetails) {
-                for (let tries = 0; tries < 10; tries += 1) {
-                  const moved = await $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' })
-                  if (moved.deny === undefined) break
-                  await $.clock.sleep(100)
-                }
+                await retried(
+                  () => $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' }),
+                  () => $.clock.sleep(100),
+                  10,
+                )
               }
             } catch {
               // The parts are open all the same; the person can scroll.
@@ -1092,6 +1108,7 @@ function alertCard(
           {reference}
         </Text>
       </Box>
+      {tight && doing}
       {held.showDetails && (
         <Box key="details-open" flexDirection="column" gap="sm">
           {shown.instead !== undefined &&
@@ -1207,7 +1224,7 @@ export const register: Register = (on, options) => {
           if (e.surface !== 'terminal') {
             // The app draws the frame: a character frame sized in terminal
             // cells does not line up in a proportional font.
-            return alertCard($.ui.resolve(e), $, id, held, shown, at)
+            return alertCard($.ui.resolve(e), $, id, held, shown, at, e.props.maxRows)
           }
           const { Box, Button, Text } = $.ui.resolve(e)
           // The frame is at most MAX_ROW_WIDTH cells wide, so that long

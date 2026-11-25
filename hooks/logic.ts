@@ -651,6 +651,24 @@ export function plainQuote(text: string): string {
     .join('')
 }
 
+/**
+ * Calls `attempt` until it is not refused, waiting between tries, at most
+ * `tries` times. True when an attempt went through. For a call whose target
+ * may not exist yet, such as a scroll to a part drawn after a state write.
+ */
+export async function retried(
+  attempt: () => Promise<{ deny?: string }>,
+  wait: () => Promise<void>,
+  tries: number,
+): Promise<boolean> {
+  for (let i = 0; i < tries; i += 1) {
+    if ((await attempt()).deny === undefined) return true
+    if (i < tries - 1) await wait()
+  }
+
+  return false
+}
+
 /** A horizontal rule `width` cells wide, at least two cells. */
 export function ruleLine(width: number): string {
   return '─'.repeat(Math.max(width, 2))

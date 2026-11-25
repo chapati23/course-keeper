@@ -296,7 +296,7 @@ const ROW = [
 
 /** The same alert as a surface that draws its own controls shows it: a card. */
 const CARD = [
-  'Breaks your rule “One service sets every price”✕',
+  'Breaks rule: “One service sets every price”✕',
   'The session adds a price table to the client, which contradicts invariant 1.',
   'Tell the agentDetailsFalse alarmInvariant 1 · Course Keeper',
 ]
@@ -552,6 +552,10 @@ test('on desktop the card fits the band, opens Details under the buttons, takes 
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   // By default: the headline, one sentence and the buttons, nothing more.
   expect(await rowLines(ui)).toEqual(CARD)
+  // A short band puts the buttons right under the headline.
+  const short = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, maxRows: 6 } })
+  expect(await rowLines(short)).toEqual([CARD[0], CARD[2], CARD[1]])
+  await short.unmount()
   // Closed, a long sentence keeps to three lines.
   expect((await ui.find({ type: 'Text', text: /^The session adds/ }))?.props.maxLines).toBe(3)
   await ui.press({ key: 'details' })
