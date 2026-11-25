@@ -1773,6 +1773,9 @@ describe('the learn answers', () => {
     expect(quotedSentence('Is this a fork?')).toBe('"Is this a fork?"')
     expect(quotedSentence('Stop!')).toBe('"Stop!"')
     expect(quotedSentence('no new files')).toBe('"no new files".')
+    expect(quotedSentence('He said "stop."')).toBe('"He said "stop.""')
+    expect(quotedSentence('It rounds (twice!)')).toBe('"It rounds (twice!)"')
+    expect(quotedSentence('the "exporter"')).toBe('"the "exporter"".')
   })
 
   test('the answer for a turn too long for the test shows the sentence as not tested', () => {

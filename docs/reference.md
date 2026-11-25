@@ -48,7 +48,7 @@ The row has four buttons:
 - `3 False alarm` asks you to press it again ("Confirm false alarm"). The second press closes the alert and records that this is no deviation, or that you wanted it. Later checks are told so, and do not raise it again.
 - `4 Dismiss` closes the alert.
 
-In the terminal, press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. In the desktop app, click a button. Course Keeper also raises a desktop notification. In the terminal, the notification is raised. In the desktop app, it arrives only when the app has turned on notifications for the session; otherwise only the row shows the alert. Its title is "Course Keeper: this session breaks invariant 1 (One module computes every amount)", and its text is the sentence about the deviation.
+In the terminal, press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. In the desktop app, click a button. Course Keeper also raises a desktop notification where Claude Code offers one. In the desktop app, it arrives only when the app has turned on notifications for the session; otherwise only the card shows the alert. Its title is "Course Keeper: this session breaks invariant 1 (One module computes every amount)", and its text is the sentence about the deviation.
 
 Course Keeper also notes standing instructions: goals or instructions you state in a prompt that stay in force beyond one task. It shows a short notice when it adds one.
 

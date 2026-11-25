@@ -714,10 +714,11 @@ function time(ms: number): string {
 /**
  * Quoted text that ends a sentence: the text in quotation marks, then a
  * period, unless the text already ends with a period, a question mark or an
- * exclamation mark.
+ * exclamation mark. Closing quotation marks and brackets after that mark do
+ * not count: `He said "stop."` already ends its sentence.
  */
 export function quotedSentence(text: string): string {
-  return /[.?!]$/.test(text) ? `"${text}"` : `"${text}".`
+  return /[.?!]["'\u201d\u2019)\]]*$/.test(text) ? `"${text}"` : `"${text}".`
 }
 
 /** The default name of the vision file. */
