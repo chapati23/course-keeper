@@ -37,7 +37,7 @@ A terminal session, the desktop app or VS Code. The only interface is one alert 
 
 ## Evidence on Hand
 
-Two staged screenshots of the alert are in `docs/images/`: a scripted model reply in the real Claude Code interface. Measurements of the check are in `docs/writing-rules.md`. No testimonials, customers or usage numbers exist; do not invent any.
+Screenshots of the alert are in `docs/images/`. Two terminal shots use a scripted model reply in the real Claude Code interface. Two desktop app shots (light and dark) show a live Haiku 5.5 session on a throwaway project. Measurements of the check are in `docs/writing-rules.md`. No testimonials, customers or usage numbers exist; do not invent any.
 
 ## Product Principles
 
