@@ -37,7 +37,7 @@ A terminal session, the desktop app or VS Code. The only interface is one alert 
 
 ## Evidence on Hand
 
-No screenshots of a live session yet. Measurements of the check are in the README. No testimonials, customers or usage numbers exist; do not invent any.
+Two staged screenshots of the alert are in `docs/images/`: a scripted model reply in the real Claude Code interface. Measurements of the check are in `docs/writing-rules.md`. No testimonials, customers or usage numbers exist; do not invent any.
 
 ## Product Principles
 
