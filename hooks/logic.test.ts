@@ -73,6 +73,7 @@ import {
   visionField,
   withFinalAnswer,
   withoutDraft,
+  plainQuote,
 } from './logic'
 
 const DEVIATION = [
@@ -439,6 +440,19 @@ describe('the headline', () => {
     expect(alertSubject(alertOf({ reference: 'rule x', title: 'ignored' }))).toBe(
       'this session breaks rule x',
     )
+  })
+})
+
+describe('the quote', () => {
+  test('drops Markdown inline marks and keeps their text', () => {
+    expect(plainQuote('2. **Refuse transfers** until `fee` data is _complete_.')).toBe(
+      '2. Refuse transfers until fee data is complete.',
+    )
+    expect(plainQuote('use __this__ and *that*')).toBe('use this and that')
+  })
+
+  test('keeps underscores and stars that are not emphasis', () => {
+    expect(plainQuote('set max_fee_bps to 2 * 3')).toBe('set max_fee_bps to 2 * 3')
   })
 })
 

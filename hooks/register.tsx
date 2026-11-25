@@ -7,7 +7,7 @@
 // prompt. The only event it changes is `session.compact`, where it adds to
 // the summarizer's instructions.
 
-import type { EngineInterface, Register, SessionRepo } from 'claude-code'
+import type { Elements, EngineInterface, Register, SessionRepo } from 'claude-code'
 
 import type { CourseKeeperAlert, CourseKeeperSession } from '../types'
 import {
@@ -19,6 +19,7 @@ import {
   alertHeadline,
   alertBanner,
   alertRule,
+  plainQuote,
   alertsOn,
   answerCurrent,
   antiPatternsDirective,
@@ -978,6 +979,99 @@ async function tell($: $, id: string, shownAt: number) {
   $.ui.toast('Course Keeper could not send the note to the agent. The alert is shown again.')
 }
 
+/** The amber warning mark of the card, drawn by the app rather than a glyph. */
+const WARNING_MARK =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 1.5 15 14.5H1z" fill="#D97706"/><path d="M8 6v4.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="12.2" r=".9" fill="#fff"/></svg>'
+
+/**
+ * The alert on a surface that draws its own controls (the desktop app, VS
+ * Code, a phone): a card with the app's border and spacing, the headline as
+ * its one strong line, then the parts, then the buttons. The order never
+ * changes, so Details does not move the buttons; the band scrolls a tall card.
+ */
+function alertCard(
+  { Box, Button, Text, Svg }: Pick<Elements['desktop'], 'Box' | 'Button' | 'Text' | 'Svg'>,
+  $: $,
+  id: string,
+  held: CourseKeeperSession,
+  shown: CourseKeeperAlert,
+  at: number,
+): JSX.Element {
+  const rule = alertRule(shown)
+  const confirming = held.confirmFalseAlarm === true
+  // A long part ends in an ellipsis, so the buttons stay near the top of a
+  // short band; "Tell the agent" still sends the whole note.
+  const part = (key: string, label: string, body: string, quiet?: true) => (
+    <Text key={key} dimColor={quiet} maxLines={3}>
+      <Text dimColor>{label}: </Text>
+      {body}
+    </Text>
+  )
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor="warning"
+      padding="md"
+      gap="sm"
+      marginY="sm"
+    >
+      <Box flexDirection="row" alignItems="center" gap="xs">
+        <Svg source={WARNING_MARK} alt="Warning" width={16} height={16} />
+        <Text bold>{alertBanner(shown)}</Text>
+        <Text dimColor>· Course Keeper</Text>
+      </Box>
+      {rule !== undefined && (
+        <Text>
+          <Text dimColor>{rule.label}: </Text>
+          <Text bold>"{rule.words}"</Text>
+        </Text>
+      )}
+      {part('doing', 'What your agent is doing', shown.alert)}
+      {shown.instead !== undefined &&
+        shown.instead !== '' &&
+        part('instead', 'What it should do instead', shown.instead)}
+      {shown.evidence !== '' &&
+        part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
+      {held.showDetails && part('note', 'For the agent', shown.note, true)}
+      {/* No Button takes the focus first: a stray Enter sends nothing. */}
+      <Box flexDirection="row" flexWrap="wrap" gap="xs">
+        <Button
+          key="tell"
+          variant="primary"
+          hotkey="1"
+          label="Tell the agent"
+          onPress={() => tell($, id, at).catch(() => undefined)}
+        />
+        <Button
+          key="details"
+          hotkey="2"
+          label={held.showDetails ? 'Hide details' : 'Details'}
+          onPress={() =>
+            change($, id, r =>
+              r.current?.shownAt === at ? { ...r, showDetails: !r.showDetails } : r,
+            ).catch(() => undefined)
+          }
+        />
+        <Button
+          key="false-alarm"
+          hotkey="3"
+          label={confirming ? 'Confirm false alarm' : 'False alarm'}
+          onPress={() => falseAlarm($, id, at).catch(() => undefined)}
+        />
+        <Button
+          key="dismiss"
+          hotkey="4"
+          label="Dismiss"
+          role="dismiss"
+          onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
+        />
+      </Box>
+    </Box>
+  )
+}
+
 export const register: Register = (on, options) => {
   files = fileNames(options)
   on('session.start', async ($, e, next) => {
@@ -1075,8 +1169,13 @@ export const register: Register = (on, options) => {
         const { record: held } = await load($, id)
         const shown = held.current
         if (shown !== null) {
-          const { Box, Button, Text } = $.ui.resolve(e)
           const at = shown.shownAt
+          if (e.surface !== 'terminal') {
+            // The app draws the frame: a character frame sized in terminal
+            // cells does not line up in a proportional font.
+            return alertCard($.ui.resolve(e), $, id, held, shown, at)
+          }
+          const { Box, Button, Text } = $.ui.resolve(e)
           // The frame is at most MAX_ROW_WIDTH cells wide, so that long
           // sentences wrap at a reading width.
           const width = Math.max(Math.min(e.props.bodyColumns, MAX_ROW_WIDTH), 20)
@@ -1198,7 +1297,7 @@ export const register: Register = (on, options) => {
                   shown.instead !== '' &&
                   part('instead', 'What it should do instead', shown.instead)}
                 {shown.evidence !== '' &&
-                  part('quote', 'Quote', `"${shown.evidence}"`, true)}
+                  part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
                 {held.showDetails &&
                   part('note', 'For the agent', shown.note, true)}
                 {!actionsFirst && actions}
