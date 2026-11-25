@@ -283,11 +283,11 @@ const ACTIONS =
 const ROW = [
   '',
   TOP('Session breaks invariant 1'),
-  '  Your rule: "One service sets every price"',
+  '  Your rule: “One service sets every price”',
   '',
-  '  What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
+  '  What your agent did: The session adds a price table to the client, which contradicts invariant 1.',
   '',
-  '  Quote: "I will add a fallback price table in the client."',
+  '  Agent wrote: “I will add a fallback price table in the client.”',
   '',
   ACTIONS,
   BOTTOM,
@@ -296,11 +296,9 @@ const ROW = [
 
 /** The same alert as a surface that draws its own controls shows it: a card. */
 const CARD = [
-  'Session breaks invariant 1· Course Keeper',
-  'Your rule: "One service sets every price"',
-  '1: Tell the agent2: Details3: False alarm4: Dismiss',
-  'What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
-  'Quote: "I will add a fallback price table in the client."',
+  'Breaks your rule “One service sets every price”Invariant 1 · Course KeeperDismiss',
+  'The session adds a price table to the client, which contradicts invariant 1.',
+  'Tell the agentDetailsFalse alarm',
 ]
 
 test('a turn ends, the check finds a deviation, the band shows it, Dismiss clears it', async ($, on) => {
@@ -529,11 +527,8 @@ test('an instead field draws as its own part between the alert and the quote', a
             '  What it should do instead: Move the table into the price service.',
             ...ROW.slice(5),
           ]
-        : [
-            ...CARD.slice(0, 4),
-            'What it should do instead: Move the table into the price service.',
-            ...CARD.slice(4),
-          ],
+        : // On the card, "instead" waits behind Details.
+          CARD,
     )
     // Not dim: it weighs as much as the alert.
     expect((await ui.find({ type: 'Text', text: /^Move the table into/ }))?.props.dimColor).toBeUndefined()
@@ -541,9 +536,12 @@ test('an instead field draws as its own part between the alert and the quote', a
   }
 })
 
-test('on desktop the card keeps its order with Details open, takes no focus first and marks Tell the agent as the main action', async ($, on) => {
+test('on desktop the card fits the band, opens Details under the buttons, takes no focus first and has no number keys', async ($, on) => {
   const { clock } = world(on, () =>
-    DEVIATION.replace('evidence: "I will add a fallback', 'evidence: "I will **add** a `fallback`'),
+    DEVIATION.replace(
+      'evidence: "I will add a fallback',
+      'instead: Move the table into the price service.\nevidence: "I will **add** a `fallback`',
+    ),
   )
 
   await personTypes($, 'ok')
@@ -551,22 +549,27 @@ test('on desktop the card keeps its order with Details open, takes no focus firs
   await $.turn.complete(END)
   await settle(clock)
 
-  // A band too short for the terminal frame does not reorder the card.
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, maxRows: 5 } })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  // By default: the headline, one sentence and the buttons, nothing more.
+  expect(await rowLines(ui)).toEqual(CARD)
   await ui.press({ key: 'details' })
   const lines = await rowLines(ui)
-  expect(lines[0]).toBe('Session breaks invariant 1· Course Keeper')
-  // The buttons stay right under the headline and the rule, inside a short band's window.
-  expect(lines[2]).toBe('1: Tell the agent2: Hide details3: False alarm4: Dismiss')
-  expect(lines[lines.length - 1]).toMatch(/^For the agent: /)
-  expect(lines.some(l => l.startsWith('For the agent: '))).toBe(true)
-  // The quote reads as the transcript shows it, without Markdown marks.
-  expect(lines).toContain('Quote: "I will add a fallback price table in the client."')
+  // The buttons hold their place; the parts open under them.
+  expect(lines.slice(0, 2)).toEqual(CARD.slice(0, 2))
+  expect(lines[2]).toBe('Tell the agentHide detailsFalse alarm')
+  expect(lines.slice(3, 5)).toEqual([
+    'Instead: Move the table into the price service.',
+    // The quote reads as the transcript shows it, without Markdown marks.
+    'Agent wrote: \u201cI will add a fallback price table in the client.\u201d',
+  ])
+  expect(lines[5]).toMatch(/^For the agent: /)
   expect(lines.join('\n')).not.toContain('ctrl+x tab')
-  expect(lines.join('\n')).not.toContain('─')
+  expect(lines.join('\n')).not.toContain('\u2500')
   const tell = await ui.find({ key: 'tell' })
   expect(tell?.props.variant).toBe('primary')
   expect(tell?.props.autoFocus).toBeUndefined()
+  expect(tell?.props.hotkey).toBeUndefined()
+  expect((await ui.find({ key: 'dismiss' }))?.props.role).toBe('dismiss')
   await ui.unmount()
 })
 
@@ -583,7 +586,7 @@ test('an instruction reference quotes the words in the headline', async ($, on) 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await rowLines(ui)).slice(1, 3)).toEqual([
     TOP('Session breaks your instruction'),
-    '  Your instruction: "never add a table to the client"',
+    '  Your instruction: “never add a table to the client”',
   ])
   await ui.unmount()
 })
@@ -622,7 +625,9 @@ test('an alert stored before alerts kept a title still draws, without a title', 
     const ui = await $.ui.mount({ ...BAND, surface })
     // No title: no "Your rule" line.
     expect(await rowLines(ui)).toEqual(
-      surface === 'terminal' ? [ROW[0], ROW[1], ...ROW.slice(3)] : [CARD[0], ...CARD.slice(2)],
+      surface === 'terminal'
+        ? [ROW[0], ROW[1], ...ROW.slice(3)]
+        : ['Session breaks invariant 1Course KeeperDismiss', ...CARD.slice(1)],
     )
     await ui.unmount()
   }
@@ -1059,7 +1064,7 @@ test('a check that lost its in-flight mark does not replace a newer alert', asyn
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /contradicts invariant 1/ }))?.text).toBe(
-    'What your agent is doing: The session adds a price table to the client, which contradicts invariant 1.',
+    'What your agent did: The session adds a price table to the client, which contradicts invariant 1.',
   )
   await ui.unmount()
   // The dropped reply leaves the newer check's outcome in the status.

@@ -985,9 +985,15 @@ const WARNING_MARK =
 
 /**
  * The alert on a surface that draws its own controls (the desktop app, VS
- * Code, a phone): a card with the app's border and spacing, the headline as
- * its one strong line, the rule, the buttons, then the parts. The order never changes,
- * so Details does not move the buttons; the band scrolls a tall card.
+ * Code, a phone): a compact card that fits the band. One strong line names
+ * the rule the session breaks, a small line the reference and the plugin, one
+ * sentence says what the agent did, then the buttons. Details opens what the
+ * agent should do instead, its words and the note under the buttons, and
+ * brings them into view. Dismiss is the surface's own close control.
+ *
+ * No number keys: in the app they answer only after a click on the card,
+ * and a click on the button does it in one step. No Button takes the focus
+ * first, so a stray Enter sends nothing.
  */
 function alertCard(
   { Box, Button, Text, Svg }: Pick<Elements['desktop'], 'Box' | 'Button' | 'Text' | 'Svg'>,
@@ -999,6 +1005,16 @@ function alertCard(
 ): JSX.Element {
   const rule = alertRule(shown)
   const confirming = held.confirmFalseAlarm === true
+  const isInstruction = /^instruction "/.test(shown.reference)
+  // "Breaks your rule “…”", or the banner when no title is stored.
+  const headline =
+    rule === undefined
+      ? alertBanner(shown)
+      : `Breaks ${isInstruction ? 'your instruction' : 'your rule'} \u201c${rule.words}\u201d`
+  // The headline names the reference itself when no title is stored.
+  const reference = isInstruction || rule === undefined
+    ? 'Course Keeper'
+    : `${shown.reference.replace(/^invariant/, 'Invariant')} \u00b7 Course Keeper`
   const part = (key: string, label: string, body: string, quiet?: true) => (
     <Text key={key} dimColor={quiet}>
       <Text dimColor>{label}: </Text>
@@ -1011,63 +1027,66 @@ function alertCard(
       flexDirection="column"
       borderStyle="round"
       borderColor="warning"
+      backgroundColor="surface-0"
       padding="md"
       gap="sm"
-      marginY="sm"
     >
-      <Box flexDirection="row" alignItems="center" gap="xs">
+      <Box flexDirection="row" alignItems="flex-start" gap="xs">
         <Svg source={WARNING_MARK} alt="Warning" width={16} height={16} />
-        <Text bold>{alertBanner(shown)}</Text>
-        <Text dimColor>· Course Keeper</Text>
-      </Box>
-      {rule !== undefined && (
-        <Text>
-          <Text dimColor>{rule.label}: </Text>
-          <Text bold>"{rule.words}"</Text>
-        </Text>
-      )}
-      {/* The buttons sit under the headline and the rule, so they stay in a short band's
-          window, where their keys answer. No Button takes the focus first:
-          a stray Enter sends nothing. */}
-      <Box flexDirection="row" flexWrap="wrap" gap="xs">
-        <Button
-          key="tell"
-          variant="primary"
-          hotkey="1"
-          label="Tell the agent"
-          onPress={() => tell($, id, at).catch(() => undefined)}
-        />
-        <Button
-          key="details"
-          hotkey="2"
-          label={held.showDetails ? 'Hide details' : 'Details'}
-          onPress={() =>
-            change($, id, r =>
-              r.current?.shownAt === at ? { ...r, showDetails: !r.showDetails } : r,
-            ).catch(() => undefined)
-          }
-        />
-        <Button
-          key="false-alarm"
-          hotkey="3"
-          label={confirming ? 'Confirm false alarm' : 'False alarm'}
-          onPress={() => falseAlarm($, id, at).catch(() => undefined)}
-        />
+        <Box flexDirection="column" flexGrow={1}>
+          <Text weight="semibold">{headline}</Text>
+          <Text size="caption" dimColor>
+            {reference}
+          </Text>
+        </Box>
         <Button
           key="dismiss"
-          hotkey="4"
           label="Dismiss"
           role="dismiss"
           onPress={() => answer($, id, at, 'dismissed').catch(() => undefined)}
         />
       </Box>
-      {part('doing', 'What your agent is doing', shown.alert)}
-      {shown.instead !== undefined &&
-        shown.instead !== '' &&
-        part('instead', 'What it should do instead', shown.instead)}
-      {shown.evidence !== '' &&
-        part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
-      {held.showDetails && part('note', 'For the agent', shown.note, true)}
+      <Text key="doing">{shown.alert}</Text>
+      <Box flexDirection="row" flexWrap="wrap" gap="xs">
+        <Button
+          key="tell"
+          variant="primary"
+          label="Tell the agent"
+          onPress={() => tell($, id, at).catch(() => undefined)}
+        />
+        <Button
+          key="details"
+          label={held.showDetails ? 'Hide details' : 'Details'}
+          onPress={async () => {
+            try {
+              const done = await change($, id, r =>
+                r.current?.shownAt === at ? { ...r, showDetails: !r.showDetails } : r,
+              )
+              // The parts open under the buttons; bring them into the band's view.
+              if (done.current?.shownAt === at && done.showDetails) {
+                await $.ui.scroll({ to: { key: 'details-open' }, block: 'nearest' })
+              }
+            } catch {
+              // The parts are open all the same; the person can scroll.
+            }
+          }}
+        />
+        <Button
+          key="false-alarm"
+          label={confirming ? 'Confirm false alarm' : 'False alarm'}
+          onPress={() => falseAlarm($, id, at).catch(() => undefined)}
+        />
+      </Box>
+      {held.showDetails && (
+        <Box key="details-open" flexDirection="column" gap="sm">
+          {shown.instead !== undefined &&
+            shown.instead !== '' &&
+            part('instead', 'Instead', shown.instead)}
+          {shown.evidence !== '' &&
+            part('quote', 'Agent wrote', `\u201c${plainQuote(shown.evidence)}\u201d`, true)}
+          {part('note', 'For the agent', shown.note, true)}
+        </Box>
+      )}
     </Box>
   )
 }
@@ -1201,7 +1220,7 @@ export const register: Register = (on, options) => {
             frameRows(
               width,
               `── ▲ ${banner} · Course Keeper ──`,
-              rule === undefined ? undefined : `${rule.label}: "${rule.words}"`,
+              rule === undefined ? undefined : `${rule.label}: “${rule.words}”`,
               parts,
               space,
             )
@@ -1289,15 +1308,15 @@ export const register: Register = (on, options) => {
                 {rule !== undefined && (
                   <Box flexDirection="row">
                     <Text>{rule.label}: </Text>
-                    <Text bold>"{rule.words}"</Text>
+                    <Text bold>“{rule.words}”</Text>
                   </Box>
                 )}
-                {part('doing', 'What your agent is doing', shown.alert)}
+                {part('doing', 'What your agent did', shown.alert)}
                 {shown.instead !== undefined &&
                   shown.instead !== '' &&
                   part('instead', 'What it should do instead', shown.instead)}
                 {shown.evidence !== '' &&
-                  part('quote', 'Quote', `"${plainQuote(shown.evidence)}"`, true)}
+                  part('quote', 'Agent wrote', `“${plainQuote(shown.evidence)}”`, true)}
                 {held.showDetails &&
                   part('note', 'For the agent', shown.note, true)}
                 {!actionsFirst && actions}
