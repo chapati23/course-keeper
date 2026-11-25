@@ -22,6 +22,16 @@ Preconditions: Use a dedicated model-backed session. Include an invariant that f
 - **False alarm.** On a fresh alert press 3. Verify that the button reads "Confirm false alarm" and the row stays. Press 3 again. Verify that the row closes and status records the intended act. Repeat the same act and inspect the next check for recurrence.
 - **Dismiss.** On a fresh alert press 4. Verify that the row closes and status records dismissal.
 
+## Driving it in the Claude desktop app
+
+The desktop app, like VS Code and the phones, draws the alert as a card. Check it with a model-backed session in the app.
+
+- **Load this checkout.** Run `claude plugin uninstall course-keeper@course-keeper`, `claude plugin marketplace remove course-keeper`, `claude plugin marketplace add <checkout>` and `claude plugin install course-keeper@course-keeper`. In the app session, enter `/reload-plugins`. Return first accepts the suggestion; press Return again only after the composer shows the command.
+- **Before each keystroke,** confirm that the app shows your test session, as the global desktop computer-use rule says. The person may be typing in another session.
+- **Folder picker.** The app's "Select folder" dialog is drawn by the separate process `com.apple.appkit.xpc.openAndSavePanelService`. Send its keys to that process's window; Cmd+Shift+G opens "Go to folder".
+- **What to check.** The card shows the Course Keeper wheel, "Breaks rule: “…”", a ✕, one sentence, the buttons Tell the agent, Details and False alarm, and "Course Keeper" at the row's end. Details opens Instead, Agent wrote and the note under the buttons, in view. ✕ closes the alert. Check light and dark.
+- **Restore.** Run `claude plugin uninstall course-keeper@course-keeper`, `claude plugin marketplace remove course-keeper` and `claude plugin install course-keeper --marketplace chapati23/course-keeper`.
+
 ## Gotchas
 
-The baseline has no conflicting conversation or live model. A missing expected alert fails the journey. Record the actual reply and last check. Recreate the alert before testing another closing action. A VS Code session can show status but lacks the terminal alert row.
+The baseline has no conflicting conversation or live model. A missing expected alert fails the journey. Record the actual reply and last check. Recreate the alert before testing another closing action. The desktop app and VS Code draw a card in place of the terminal alert row; `claude plugin test` cannot show how a surface paints it.

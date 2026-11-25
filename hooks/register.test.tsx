@@ -536,6 +536,8 @@ test('an instead field draws as its own part between the alert and the quote', a
   }
 })
 
+// \$.ui.scroll raises no ui.scroll event in this harness (Claude Code 2.1.332),
+// so the Details scroll is checked live in the desktop app, not here.
 test('on desktop the card fits the band, opens Details under the buttons, takes no focus first and has no number keys', async ($, on) => {
   const { clock } = world(on, () =>
     DEVIATION.replace(
