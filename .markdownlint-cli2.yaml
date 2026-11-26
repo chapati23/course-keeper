@@ -1,0 +1,10 @@
+# Seeded by ci-setup 0.1.0 on 2026-11-26. This file now belongs to the repo.
+# markdownlint-cli2 reads this file for `mise run lint-docs`, locally and in CI.
+# gitignore: skip every path that .gitignore ignores, so the local Gate and CI lint the same files.
+gitignore: true
+config:
+  default: true
+  # Line length: prose wraps at any width.
+  MD013: false
+  # A file may start without a top-level heading (CLAUDE.md holds only an import line).
+  MD041: false
