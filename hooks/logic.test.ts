@@ -495,6 +495,13 @@ describe('the duplicate-alert rule', () => {
     }
   })
 
+  test('evidence that differs only in Unicode form is new evidence', () => {
+    const record = { ...emptyRecord(), alerts: [alertOf({ evidence: 'rm café.txt', answer: 'dismissed' })] }
+    const reply = parseCheckReply(DEVIATION.replace('evidence: "I will add a fallback price table in the client."', 'evidence: "rm cafe\u0301.txt"'))
+
+    expect(applyReply(record, reply, 2000).shown?.evidence).toBe('rm cafe\u0301.txt')
+  })
+
   test('the current alert counts as shown', () => {
     const record = { ...emptyRecord(), current: alertOf() }
     expect(applyReply(record, parseCheckReply(DEVIATION), 2000).shown).toBeUndefined()

@@ -411,13 +411,16 @@ function unquote(text: string): string {
 }
 
 /**
- * True when two texts are equal apart from letter case, Unicode form and
- * spaces. NFC first, so an accent written as its own mark matches the
- * accented letter; toLowerCase, not toLocaleLowerCase, so the result does
- * not depend on the machine's locale.
+ * True when two texts are equal apart from letter case and spaces, and for
+ * words (a reference or an instruction) also apart from Unicode form: NFC
+ * first, so an accent written as its own mark matches the accented letter.
+ * Evidence keeps its form, because two file names can differ only in it.
+ * toLowerCase, not toLocaleLowerCase, so the result does not depend on the
+ * machine's locale.
  */
-function same(a: string, b: string): boolean {
-  const norm = (s: string) => s.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()
+function same(a: string, b: string, form: 'words' | 'evidence' = 'words'): boolean {
+  const norm = (s: string) =>
+    (form === 'words' ? s.normalize('NFC') : s).toLowerCase().replace(/\s+/g, ' ').trim()
 
   return norm(a) === norm(b)
 }
@@ -434,7 +437,7 @@ export function wasShown(
   return all.some(
     a =>
       same(a.reference, reference) &&
-      same(unescapeQuotes(a.evidence), unescapeQuotes(evidence)),
+      same(unescapeQuotes(a.evidence), unescapeQuotes(evidence), 'evidence'),
   )
 }
 
