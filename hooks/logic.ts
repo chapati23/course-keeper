@@ -230,9 +230,11 @@ const AFTER_CLOSE = /(?:$|[\s.,;:!?)\]}*_`])/y
 /**
  * What may follow a closing single quote, which can also be an apostrophe
  * (`don't`, `users' data`): the end of the field, or a mark that is no
- * letter or digit, after any spaces.
+ * letter or digit. After a space, a backtick, asterisk or underscore starts
+ * inline code or emphasis in the text (`the users' \`id\` field`), so it
+ * does not count.
  */
-const AFTER_SINGLE_CLOSE = /\s*(?:$|[^\p{L}\p{N}\s])/uy
+const AFTER_SINGLE_CLOSE = /(?:$|[^\p{L}\p{N}\s]|\s+(?:$|[^\p{L}\p{N}\s`*_]))/uy
 
 /** True when the mark at `index` has an odd run of backslashes before it. */
 function escaped(field: string, index: number): boolean {
@@ -250,8 +252,11 @@ function escaped(field: string, index: number): boolean {
  * and a quotation in a remark after it does not join it. A quotation inside
  * the text stays whole: in straight double quotes the text holds an even
  * number of unescaped quote marks, and in curly or French quotes as many
- * inner opening marks as closing ones. Without such a mark the text runs to
- * the last closing mark; without any, there is no text.
+ * inner opening marks as closing ones. A straight mark after a space and
+ * before a mark that is not a space opens an inner quotation and closes
+ * nothing, so a quoted lone mark (`Reject "." as a name`) stays in the
+ * text. Without a closing mark the text runs to the last one; without any,
+ * there is no text.
  */
 function quotedText(field: string, start: RegExp): string | undefined {
   const match = start.exec(field)
@@ -272,7 +277,8 @@ function quotedText(field: string, start: RegExp): string | undefined {
       nonSpace ||= /\S/.test(mark)
       continue
     }
-    if (nonSpace) {
+    const opens = open === mark && /\s/.test(field.charAt(i - 1)) && /\S/.test(field.charAt(i + 1))
+    if (nonSpace && !opens) {
       last = i
       const inside = open === '"' ? depth % 2 === 1 : depth > 0
       after.lastIndex = i + 1
@@ -396,8 +402,14 @@ function unquote(text: string): string {
   return unescapeQuotes(stripQuotes(text))
 }
 
+/**
+ * True when two texts are equal apart from letter case, Unicode form and
+ * spaces. NFC first, so an accent written as its own mark matches the
+ * accented letter; toLowerCase, not toLocaleLowerCase, so the result does
+ * not depend on the machine's locale.
+ */
 function same(a: string, b: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+  const norm = (s: string) => s.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()
 
   return norm(a) === norm(b)
 }

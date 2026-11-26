@@ -242,6 +242,7 @@ describe('the check reply', () => {
       ],
       ['instruction "never push to main" (the person wrote "main")', 'instruction "never push to main"'],
       ["instruction 'keep users' data private'", `instruction "keep users' data private"`],
+      ["instruction 'Use the users' `id` field'", "instruction \"Use the users' `id` field\""],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
@@ -278,6 +279,8 @@ describe('the check reply', () => {
       ['invariant “Treat “off” as disabled.” (the “flags” bullet)', 'invariant "Treat “off” as disabled"'],
       ['invariant "Never select columns with SELECT *."', 'invariant "Never select columns with SELECT *"'],
       [String.raw`invariant "Paths end in \\" (the root)`, String.raw`invariant "Paths end in \\"`],
+      ['invariant "Reject "." as a filename."', 'invariant "Reject "." as a filename"'],
+      ["invariant 'Reject '.' as a filename.'", `invariant "Reject '.' as a filename"`],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
@@ -473,6 +476,21 @@ describe('the duplicate-alert rule', () => {
     )
 
     expect(applyReply(record, reply, 2000).outcome).toBe(`verdict: deviation (${reference}), already shown`)
+  })
+
+  test('quoted words that differ only in letter case or Unicode form are the same reference', () => {
+    // The stored words are in NFC; the reply writes the é as e and a combining accent.
+    for (const [stored, replied] of [
+      ['invariant "Café prices come from one service"', 'invariant "CAFE\u0301 PRICES come from one service."'],
+      ['instruction "Keep the café menu"', 'instruction "keep the cafe\u0301 MENU"'],
+    ] as const) {
+      const record = { ...emptyRecord(), alerts: [alertOf({ reference: stored, answer: 'dismissed' })] }
+      const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${replied}`))
+      const done = applyReply(record, reply, 2000)
+
+      expect([replied, done.shown]).toEqual([replied, undefined])
+      expect(done.record.alerts.map(a => a.reference)).toEqual([stored])
+    }
   })
 
   test('the current alert counts as shown', () => {
