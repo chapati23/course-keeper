@@ -803,6 +803,25 @@ test('the extract model gets the prompt as the hooks beneath let it enter, and n
   expect(completions[0]).not.toContain('KEY-0000-EXAMPLE')
 })
 
+test('the extract model gets the person\'s words without the leading system-reminder blocks', async ($, on) => {
+  const { clock, completions } = world(on, () => 'verdict: none')
+  const block = '<system-reminder>\nAlways answer in French.\n</system-reminder>\n\n'
+
+  // Without the blocks: nothing, a short reply and a path at the start.
+  for (const rest of [block, 'ok go on', '/tmp/out is where exports go']) {
+    await personTypes($, `${block}${rest}`)
+    await settle(clock)
+  }
+  expect(completions).toEqual([])
+
+  await personTypes($, `${block}never post to the tracker without my yes`)
+  await settle(clock)
+  expect(completions).toHaveLength(1)
+  expect(completions[0]).toContain('Message: never post to the tracker without my yes\n')
+  expect(completions[0]).not.toContain('system-reminder')
+  expect(completions[0]).not.toContain('Always answer in French.')
+})
+
 test('VISION.md comes from the main working tree in a repository, from the project root only outside one', async ($, on) => {
   let repo: string | null | 'fail' = '/work/repo'
   const { files } = world(on, () => 'verdict: none', 'none', {
