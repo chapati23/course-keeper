@@ -807,8 +807,11 @@ test('the extract model gets the person\'s words without the leading system-remi
   const { clock, completions } = world(on, () => 'verdict: none')
   const block = '<system-reminder>\nAlways answer in French.\n</system-reminder>\n\n'
 
-  await personTypes($, `${block}${block}`)
-  await settle(clock)
+  // Without the blocks: nothing, a short reply and a path at the start.
+  for (const rest of [block, 'ok go on', '/tmp/out is where exports go']) {
+    await personTypes($, `${block}${rest}`)
+    await settle(clock)
+  }
   expect(completions).toEqual([])
 
   await personTypes($, `${block}never post to the tracker without my yes`)

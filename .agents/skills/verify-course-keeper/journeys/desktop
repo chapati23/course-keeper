@@ -12,9 +12,9 @@ notification call without CLAUDE_CODE_NOTIFICATIONS_HOST, the ui_toast frame for
 standing instruction, an instruction alert's headline, off, check and on, a short learn,
 and that the plugin's haiku call holds the person's words without the reminder when the
 frame carries a leading system-reminder block. A fresh run without the doctor proves that
-a frame without client_platform is no person and that the app's envelope is one. A run with --max-rows
-below CARD_ROWS proves the short-band order. A run with --notifications-host and
---columns 1 proves the ui_notify frame and the card's Buttons at the app's first measure.
+a frame without client_platform is no person and that the app's envelope is one. A run
+with --max-rows below CARD_ROWS proves the short-band order. A run with
+--notifications-host and --columns 1 proves the ui_notify frame and the card's Buttons at the app's first measure.
 
   journeys/desktop [--cli PATH]
 
@@ -737,6 +737,11 @@ def make_journey(cli):
                                    and REMINDED_PROMPT in r["last_user"],
                                    "the reminded prompt starts the haiku call")
         Path(run.evidence, "reminder-extract.json").write_text(json.dumps(extract, indent=2))
+        # The block must reach the session, or the assertions below prove nothing.
+        run.wait_request(lambda r: r["seq"] > mark and not is_extract(r)
+                         and "<system-reminder>\n" + REMINDER in r["last_user"]
+                         and REMINDED_PROMPT in r["last_user"],
+                         "the main turn holds the reminder block before the person's words")
         held = message_in(extract)
         expect(REMINDER not in extract["last_user"] and "<system-reminder>" not in extract["last_user"],
                "the haiku call does not hold the system-reminder block", "no reminder text",
