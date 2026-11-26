@@ -394,9 +394,12 @@ async function runCheck(
   if (trigger === 'turn' && held.isOff) {
     return record($, id, 'did not run: checks are off')
   }
-  // The fork sends the main thread's last request again. If the next turn
-  // started during the waits above, that request is the next turn's, not
-  // the one the ended turn answered. A check that a turn started skips, and
+  // The fork sends the main thread's last request again. The copy can hold
+  // the ended turn's answer too (Claude Code 2.1.332 does; 2.1.330 was not
+  // checked), so withFinalAnswer adds the answer and says only that the
+  // conversation may show it. If the next turn started during the waits
+  // above, that request is the next turn's, not the one the ended turn
+  // answered. A check that a turn started skips, and
   // the next turn's end checks it. One the person asked for runs without
   // the ended turn's answer. Nothing waits between these tests and the fork.
   const isOvertaken =
@@ -524,6 +527,7 @@ async function runCommand($: $, args: string): Promise<string> {
         vision?.antiPatterns?.path,
         vision?.names ?? files,
         vision?.namedInVision,
+        vision?.text,
       )
     }
     case 'check':
@@ -664,8 +668,8 @@ async function makeDraft(
   // A new request replaces a draft the person did not accept.
   await change($, id, withoutDraft)
   const template = await readPrompt($, 'learn')
-  // As for a check: the fork's last request does not hold the agent's final
-  // answer to it, so the answer goes before the prompt. When the next turn
+  // As for a check: the copy may not hold the agent's final answer to the
+  // fork's last request, so the answer goes before the prompt. When the next turn
   // started since, the fork's last request is that turn's, and no answer is
   // added. Nothing waits between this test and the fork.
   const isOvertaken =

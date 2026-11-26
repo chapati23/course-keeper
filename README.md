@@ -85,7 +85,7 @@ The check catches an act that a rule names. Write each rule so that one sentence
 | **Avoid:** a general statement only | One module computes every amount. | No alert in 3 of 3 tries |
 | **Write:** a sentence that names the act | One module computes every amount. Never round, convert or add up money in other code, not even for display. | Alert in 3 of 3 tries |
 
-The replay tests ran on recorded sessions of one private project, and they are small. [Write the vision](docs/writing-rules.md) has the full results, the optional `ANTI-PATTERNS.md` file and what the tests did not measure.
+The replay tests ran on recorded sessions of one private project, and they are small. [Write the vision](docs/writing-rules.md) has the full results, the optional `ANTI-PATTERNS.md` file and what the tests did not measure. `ANTI-PATTERNS.md` and the placement of a learned sentence under an invariant need a numbered list in `VISION.md`: their sections and places name an invariant by its number, and a bullet has none.
 
 ## Commands
 

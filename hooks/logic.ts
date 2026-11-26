@@ -132,8 +132,9 @@ export function fillCheckPrompt(
 
 /**
  * Puts the agent's final answer of the turn before the check prompt. A fork
- * sends the main thread's last request again, and that request does not
- * hold the answer the model gave to it.
+ * sends the main thread's last request again. In Claude Code 2.1.332 the
+ * forked copy also holds the answer to that request; 2.1.330 was not
+ * checked. The text says only that the conversation may show it.
  */
 export function withFinalAnswer(prompt: string, answer: string): string {
   const text = answer.trim()
@@ -141,7 +142,7 @@ export function withFinalAnswer(prompt: string, answer: string): string {
 
   return (
     'The agent ended its latest turn with the answer below. The conversation ' +
-    'above does not show this answer yet. It is part of the material to examine.\n\n' +
+    'above may already show it. It is part of the material to examine.\n\n' +
     `<final_answer>\n${text}\n</final_answer>\n\n${prompt}`
   )
 }
@@ -1014,15 +1015,35 @@ export function antiPatternsDirective(
  */
 export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'
 
-/** The text `/course-keeper` prints. */
+/**
+ * True when a line of the vision outside a fenced code block is a numbered
+ * item (`1.` or `1)`). It uses the same line pattern as `addSentence`, but it
+ * skips fenced lines, and `addSentence` and the `held` check in
+ * `addDraftSentence` do not: a numbered line inside a fenced block counts as
+ * an invariant there.
+ */
+export function hasNumberedItems(vision: string): boolean {
+  const lines = vision.split('\n')
+  const fenced = fencedLines(lines)
+
+  return lines.some((line, i) => !fenced[i] && ITEM.test(line))
+}
+
+/**
+ * The text `/course-keeper` prints. With `visionText` and an anti-patterns
+ * file, a vision without numbered items gets a line that says the file needs them.
+ */
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
   antiPatternsPath?: string,
   names: FileNames = DEFAULT_FILE_NAMES,
   namedInVision?: NamedInVision,
+  visionText?: string,
 ): string {
   const named = ` (named in ${names.vision})`
+  const unnumbered =
+    antiPatternsPath !== undefined && visionText !== undefined && !hasNumberedItems(visionText)
   const antiPatternsLines =
     namedInVision === 'missing'
       ? [`${names.antiPatterns}: not found or not readable${named}. The vision alone is used.`]
@@ -1038,6 +1059,12 @@ export function statusText(
             ...(antiPatternsPath === undefined
               ? []
               : [`${names.antiPatterns}: ${antiPatternsPath}${namedInVision === 'read' ? named : ''}`]),
+            ...(unnumbered
+              ? [
+                  `  ${names.vision} has no numbered list. The sections of ${names.antiPatterns} ` +
+                    'and the learn step find an invariant only by its number.',
+                ]
+              : []),
           ]
   const lines = [
     visionPath === undefined
