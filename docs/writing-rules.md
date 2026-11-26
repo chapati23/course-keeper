@@ -6,7 +6,7 @@ The [README](../README.md) shows a first `VISION.md` and the main advice: name t
 
 Course Keeper reads `VISION.md` at the root of the repository (the main working tree), or at the project root when the session is not in a repository. Both file names can be changed ([Settings](reference.md#settings)). Without the file, Course Keeper does nothing in that project: no check runs, no standing instruction is noted, and nothing is sent to a model.
 
-The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. The [Quick start](../README.md#quick-start) has an example.
+The vision is a short statement of what the project is and a numbered list of invariants: testable statements that a session must not contradict. The [Quick start](../README.md#quick-start) has an example. When the list has no numbers, an alert names an invariant by its bold lead, or else its first sentence, instead of its number. The learn step and the anti-patterns file still find an invariant only by its number.
 
 An optional `ANTI-PATTERNS.md` beside `VISION.md` holds the sentences that name acts to avoid, so the vision stays short. It has one section for each invariant, and the heading of a section starts with the number of its invariant. The check reads both files. Without `VISION.md`, Course Keeper does not read the anti-patterns file. For example:
 

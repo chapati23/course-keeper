@@ -14,7 +14,10 @@ export type CourseKeeperAnswer =
 
 /** One alert shown to the person, with the person's answer once given. */
 export type CourseKeeperAlert = {
-  /** `invariant <number>` or `instruction "<the person's words>"`. */
+  /**
+   * `invariant <number>`, `invariant "<the invariant's own words>"` (a vision
+   * that does not number its invariants) or `instruction "<the person's words>"`.
+   */
   reference: string
   /**
    * The title of the cited invariant, read from the vision when the check

@@ -1277,7 +1277,9 @@ export const register: Register = (on, options) => {
           // short name of what the session breaks, so their keys answer.
           const short = /^instruction "/.test(shown.reference)
             ? 'Your instruction'
-            : shown.reference.replace(/^invariant/, 'Invariant')
+            : /^invariant "/.test(shown.reference)
+              ? 'Your rule'
+              : shown.reference.replace(/^invariant/, 'Invariant')
           const actions = (
             <Box flexDirection="row" flexWrap="wrap" marginTop={actionsFirst ? 0 : space}>
               {actionsFirst && <Text color="warning">▲ </Text>}
