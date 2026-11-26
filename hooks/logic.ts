@@ -912,7 +912,10 @@ export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'
 
 /**
  * True when a line of the vision outside a fenced code block is a numbered
- * item (`1.` or `1)`), by the test that `addSentence` uses to find invariant n.
+ * item (`1.` or `1)`). It uses the same line pattern as `addSentence`, but it
+ * skips fenced lines, and `addSentence` and the `held` check in
+ * `addDraftSentence` do not: a numbered line inside a fenced block counts as
+ * an invariant there.
  */
 export function hasNumberedItems(vision: string): boolean {
   const lines = vision.split('\n')
