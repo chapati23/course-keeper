@@ -69,6 +69,7 @@ import {
   withFinalAnswer,
   withOutcome,
   withoutDraft,
+  withoutLeadingReminders,
 } from './logic'
 import type { EarlierTest, ExcerptResult, FileNames, NamedInVision, Turn } from './logic'
 
@@ -470,7 +471,9 @@ async function notePrompt(
 ): Promise<void> {
   const id = await $.session.id()
   await change($, id, r => (r.hasPerson ? r : { ...r, hasPerson: true }))
-  if (!shouldExtract(text, isCommand, isMeta)) return
+  // A system-reminder block before the person's words is not theirs.
+  const words = withoutLeadingReminders(text)
+  if (!shouldExtract(words, isCommand, isMeta)) return
   // Without a vision no check runs, so nothing would use the instruction:
   // in such a project Course Keeper sends nothing to any model.
   if ((await readVision($)) === undefined) return
@@ -479,7 +482,7 @@ async function notePrompt(
   const { record: beforeCall } = await load($, id)
   const reply = await $.model.complete({
     model: 'haiku',
-    prompt: fillExtractPrompt(template, text),
+    prompt: fillExtractPrompt(template, words),
   })
   if (!reply.isAnswered) return
   const candidates = parseExtractReply(reply.text)

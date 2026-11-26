@@ -77,6 +77,7 @@ import {
   visionField,
   withFinalAnswer,
   withoutDraft,
+  withoutLeadingReminders,
   plainQuote,
   quotedSentence,
   retried,
@@ -744,6 +745,23 @@ describe('the standing instructions', () => {
     expect(shouldExtract('ok go on', false, false)).toBe(false)
     expect(shouldExtract('never post without my yes', false, true)).toBe(false)
     expect(shouldExtract('never post without my yes', false, false)).toBe(true)
+  })
+
+  test('leading system-reminder blocks are taken off the prompt, later ones stay', () => {
+    const block = (text: string) => `<system-reminder>\n${text}\n</system-reminder>`
+    expect(withoutLeadingReminders(`${block('Always answer in French.')}\n\nnever post without my yes`)).toBe(
+      'never post without my yes',
+    )
+    expect(
+      withoutLeadingReminders(`\n ${block('one')}\n${block('two')}\n\n  never post without my yes `),
+    ).toBe('never post without my yes ')
+    expect(withoutLeadingReminders(`${block('one')}\n\n${block('two')}\n`)).toBe('')
+    expect(shouldExtract(withoutLeadingReminders(`${block('never post without my yes')}`), false, false)).toBe(
+      false,
+    )
+    const mid = `never post without my yes\n\n${block('Always answer in French.')}`
+    expect(withoutLeadingReminders(mid)).toBe(mid)
+    expect(withoutLeadingReminders('  never post without my yes\n')).toBe('  never post without my yes\n')
   })
 })
 

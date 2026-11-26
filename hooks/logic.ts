@@ -1575,6 +1575,19 @@ export function excerptKeepsQuote(
 const LEADING_REMINDER = /^\s*<system-reminder>[\s\S]*?<\/system-reminder>/
 
 /**
+ * A prompt without the system-reminder blocks at its start, and without the
+ * whitespace around them. The desktop app can put such blocks before the
+ * words a person types; they are not the person's words. A block later in
+ * the text stays, and a prompt without a leading block comes back unchanged.
+ */
+export function withoutLeadingReminders(text: string): string {
+  let rest = text
+  while (LEADING_REMINDER.test(rest)) rest = rest.replace(LEADING_REMINDER, '')
+
+  return rest === text ? text : rest.trimStart()
+}
+
+/**
  * The prompt of an excerpt check: the check prompt with its leading
  * system-reminder block replaced by `head`, the fields filled, and the
  * excerpt after it. Both templates come without their leading comments.
