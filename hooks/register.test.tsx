@@ -1550,6 +1550,18 @@ test('the anti-patterns file beside VISION.md goes into the check and the status
   expect(forks).toHaveLength(1)
 })
 
+test('the status says when a bullet vision has an anti-patterns file', async ($, on) => {
+  const { files } = world(on, () => 'verdict: none')
+  files['/work/repo/ANTI-PATTERNS.md'] = ANTI_PATTERNS
+  expect(await status($)).not.toContain('no numbered list')
+
+  files['/work/repo/VISION.md'] = '# Example\n\n- One service sets every price.\n'
+  expect(await status($)).toContain(
+    'ANTI-PATTERNS.md: /work/repo/ANTI-PATTERNS.md\n  VISION.md has no numbered list. The sections of ' +
+      'ANTI-PATTERNS.md and the learn step find an invariant only by its number.\nChecks:',
+  )
+})
+
 test('with an anti-patterns file, a sentence for an invariant is tested in the anti-patterns file', async ($, on) => {
   let reply = DRAFT
   const { forks, files, completions } = world(
