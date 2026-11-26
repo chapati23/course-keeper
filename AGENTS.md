@@ -30,7 +30,7 @@ ci-setup wrote this section. A re-run of ci-setup replaces the text between the 
 
 ### Workflow edits
 
-- Never edit `.github/workflows/**`. The Agent account token has no `workflow` scope, so GitHub refuses the push.
+- Never edit `.github/workflows/**`. This repo has no Agent account yet, so GitHub does not refuse the push: the rule depends on you.
 - Hand workflow and `actions.lock` changes to the owner as a patch. Never run `gh actions-lock` without `--verify`: relocking is an owner task.
 - `gh actions-lock --verify` is read-only and part of the Gate (task `lint-workflows`). It needs the `github/gh-actions-lock` extension at the version in `.github/ci-setup.json` and `gh auth`. When either is missing, the Gate fails that task: do not install the extension or relock; report the failure and hand the check to the owner.
 - Owner sessions only: run `gh actions-lock` after a workflow edit and commit `actions.lock` in the same commit. Never pass `--accept-moved` or `--no-narrow`. Never edit `actions.lock` by hand.
