@@ -40,13 +40,27 @@ import { fileURLToPath } from 'node:url';
 
 const EXIT = { OK: 0, FAIL: 1, INCOMPLETE: 2 };
 
+// Remove every `open ... close` span. An unterminated span stays, as it is not a span.
+function stripSpans(text, open, close) {
+  let out = '';
+  let from = 0;
+  for (;;) {
+    const start = text.indexOf(open, from);
+    if (start === -1) return out + text.slice(from);
+    const end = text.indexOf(close, start + open.length);
+    if (end === -1) return out + text.slice(from);
+    out += text.slice(from, start);
+    from = end + close.length;
+  }
+}
+
 export function countJUnit(xml) {
   // Remove comments and CDATA until none is left: one pass over `<!-<!---->-` leaves `<!--`,
   // and a testcase inside the comment it opens would count.
   let text = String(xml);
   for (let prev = null; prev !== text;) {
     prev = text;
-    text = text.replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+    text = stripSpans(stripSpans(text, '<!--', '-->'), '<![CDATA[', ']]>');
   }
   const counts = { total: 0, skipped: 0, failures: 0, errors: 0 };
   const re = /<testcase\b(?:[^>"']|"[^"]*"|'[^']*')*?(\/>|>([\s\S]*?)<\/testcase\s*>)/g;
