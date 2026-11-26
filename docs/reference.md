@@ -6,13 +6,13 @@ Install, settings, the alert, the command, what is sent to the model, cost and l
 
 At the prompt of a terminal session:
 
-```
+```text
 /plugin install course-keeper --marketplace chapati23/course-keeper
 ```
 
 From a shell:
 
-```
+```sh
 claude plugin install course-keeper --marketplace chapati23/course-keeper
 ```
 

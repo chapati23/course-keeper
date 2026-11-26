@@ -1,0 +1,7 @@
+# Seeded by ci-setup 0.1.0 on 2026-11-26. This file now belongs to the repo.
+# gitleaks reads this file from the repo root. It extends the default rule set.
+# Add a rule here for a provider key that the default rules do not cover.
+title = "gitleaks config"
+
+[extend]
+useDefault = true

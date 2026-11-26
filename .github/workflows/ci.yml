@@ -1,0 +1,176 @@
+# Managed by ci-setup; see .github/ci-setup.json
+name: ci
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions: {}
+defaults:
+  run:
+    shell: bash
+jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.flags.outputs.code }}
+      e2e: ${{ steps.flags.outputs.e2e }}
+      docs: ${{ steps.flags.outputs.docs }}
+      workflows: ${{ steps.flags.outputs.workflows }}
+      deps: ${{ steps.flags.outputs.deps }}
+      base: ${{ steps.flags.outputs.base }}
+    steps:
+      - name: checkout (full history for the diff and the secret scan range)
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: classify changes
+        id: flags
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base=""
+          [ "$EVENT" = pull_request ] && base="$PR_BASE"
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git diff --name-only -z --no-renames "$base...HEAD" > "$RUNNER_TEMP/changed.txt"
+            node .github/ci/classify.mjs < "$RUNNER_TEMP/changed.txt" > "$RUNNER_TEMP/flags.json"
+            node .github/ci/classify.mjs --protected < "$RUNNER_TEMP/changed.txt"
+          else
+            base=""
+            node .github/ci/classify.mjs --all < /dev/null > "$RUNNER_TEMP/flags.json"
+          fi
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' "$RUNNER_TEMP/flags.json" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: languages without a job
+        run: node .github/ci/classify.mjs --languages
+
+  lint:
+    name: lint
+    needs: classify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: checkout (full history for the diff and the secret scan range)
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: restore cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.local/share/mise
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'mise.lock') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+      - name: require mise.lock
+        run: test -f mise.lock || { echo "::error file=mise.toml::mise.lock is missing. Run mise lock --platform linux-x64 and commit mise.lock."; exit 1; }
+      - name: set up mise and the pinned tools
+        uses: jdx/mise-action@v5.2.7
+        with:
+          version: 2026.11.7
+          install: true
+          cache: false
+      - name: secret scan
+        env:
+          SCAN_BASE: ${{ needs.classify.outputs.base }}
+        run: mise run secrets
+      - name: docs lint
+        if: ${{ !cancelled() }}
+        run: mise run lint-docs
+      - name: shell lint
+        if: ${{ !cancelled() && needs.classify.outputs.code == 'true' }}
+        run: mise run lint-shell
+      - name: skill lint
+        if: ${{ !cancelled() && needs.classify.outputs.code == 'true' }}
+        run: mise run lint-skills
+      - name: save cache (the one saving job; default-branch push only)
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.local/share/mise
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'mise.lock') }}
+
+  workflows:
+    name: workflows
+    needs: classify
+    if: needs.classify.outputs.workflows == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: restore cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.local/share/mise
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'mise.lock') }}
+          restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
+      - name: require mise.lock
+        run: test -f mise.lock || { echo "::error file=mise.toml::mise.lock is missing. Run mise lock --platform linux-x64 and commit mise.lock."; exit 1; }
+      - name: set up mise and the pinned tools
+        uses: jdx/mise-action@v5.2.7
+        with:
+          version: 2026.11.7
+          install: true
+          cache: false
+      - name: install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin v0.4.1
+      - name: verify gh-actions-lock
+        run: echo "39deb2fe714dbf74b073d8245fc7f3d50cd0eee18d5c0900e9e849ae933ae17e  ${XDG_DATA_HOME:-$HOME/.local/share}/gh/extensions/gh-actions-lock/gh-actions-lock" | sha256sum --check --strict -
+      - name: workflow lint
+        run: mise run lint-workflows
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [classify, lint, workflows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require a trusted author for fork PRs
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ASSOC: ${{ github.event.pull_request.author_association }}
+        run: |
+          [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] && exit 0
+          case "$ASSOC" in
+            OWNER|MEMBER|COLLABORATOR) exit 0 ;;
+          esac
+          echo "::error title=ci-ok::PR from an outside fork: the owner reviews it and merges it with the admin bypass"
+          exit 1
+      - name: Evaluate needed jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          jq -e --arg draft "$DRAFT" '
+            .classify.outputs as $f
+            | {"workflows": "workflows"} as $flag
+            | to_entries | all(
+                .value.result == "success" or
+                (.value.result == "skipped" and ($flag[.key] // null) != null
+                  and ($f[$flag[.key]] == "false"
+                    or (.key == "e2e" and $draft == "true" and $f.e2e == "true")))
+              )' <<<"$NEEDS"

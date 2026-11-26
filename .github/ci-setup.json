@@ -1,0 +1,150 @@
+{
+  "schema": 3,
+  "skill_version": "0.1.0",
+  "generated_at": "2026-11-26T07:59:03.152Z",
+  "repo": {
+    "owner": "chapati23",
+    "name": "course-keeper",
+    "full_name": "chapati23/course-keeper",
+    "visibility": "public",
+    "owner_type": "User",
+    "plan": "unknown",
+    "default_branch": "main"
+  },
+  "layout": "public-parallel",
+  "shape": "docs-repo",
+  "stack": "docs-repo",
+  "detected": {
+    "signals": [
+      ".agents/skills/verify-course-keeper/SKILL.md",
+      "tsconfig.json"
+    ],
+    "facts": {
+      "package_manager": null,
+      "lockfile": null,
+      "lint": null,
+      "tests": null,
+      "e2e": null,
+      "ui": false,
+      "languages": [
+        "markdown"
+      ],
+      "weak_languages": [
+        "python",
+        "typescript"
+      ],
+      "llm": false,
+      "scripts": [],
+      "node_version": null,
+      "frameworks": [],
+      "has_shell": false,
+      "skills": [
+        ".agents/skills/verify-course-keeper/SKILL.md"
+      ],
+      "workspace": false,
+      "integration_tests": false,
+      "renovate": false
+    }
+  },
+  "declared_stack": [
+    "docs"
+  ],
+  "agent_account": {
+    "login": null,
+    "permission": null,
+    "token_scopes_checked": false
+  },
+  "owner_login": "chapati23",
+  "protected_paths": [
+    "/.github/",
+    "/mise.toml",
+    "/mise.lock",
+    "/AGENTS.md",
+    "/CLAUDE.md",
+    "/.claude/",
+    "/.codex/",
+    "/mise.*.toml",
+    "/.mise.toml",
+    "/.mise.*.toml",
+    "/mise.*.lock",
+    "/.mise/",
+    "/mise/",
+    "/.config/mise.toml",
+    "/.config/mise.*.toml",
+    "/.config/mise/",
+    "/mise-tasks/",
+    "/.mise-tasks/",
+    "/.tool-versions",
+    "/.gitleaks.toml",
+    "/.gitleaksignore",
+    "/.gitignore",
+    ".markdownlint*",
+    ".markdownlint-cli2.*",
+    ".shellcheckrc",
+    ".editorconfig"
+  ],
+  "acknowledged_languages": [
+    "python",
+    "typescript"
+  ],
+  "pinning": {
+    "mode": "lockfile",
+    "gh_actions_lock": "v0.4.1",
+    "lock_schema": "v0.0.3",
+    "lock_path": ".github/workflows/actions.lock"
+  },
+  "decisions": [
+    {
+      "key": "unchecked_code",
+      "value": "Declared stack docs on a repo that holds python, typescript code: no job lints, type-checks or tests that code, and the Classifier does not warn about python, typescript",
+      "source": "declared",
+      "needs_review": true
+    },
+    {
+      "key": "node",
+      "value": "node 24 (LTS line); mise.lock pins the exact release",
+      "source": "default"
+    },
+    {
+      "key": ".gitignore",
+      "value": "the existing .gitignore lacks reports/, test-results/, playwright-report/, .claude/worktrees/; add them, or test reports and agent worktrees count as changed paths",
+      "source": "detected",
+      "needs_review": true
+    }
+  ],
+  "timeouts": {
+    "classify": 5,
+    "lint": 15,
+    "workflows": 10,
+    "ci-ok": 5
+  },
+  "required_contexts": [
+    {
+      "context": "ci-ok",
+      "integration_id": 15368
+    }
+  ],
+  "unavailable": [],
+  "unproven_jobs": [],
+  "owned_files": {
+    ".github/workflows/ci.yml": "sha256:2b512ed9e7768e8a99c6143633d3d01b3616309dbb4dad2807dc55a51d2ae4de"
+  },
+  "seeded_files": [
+    ".github/CODEOWNERS",
+    ".github/ci/classify.fixtures.json",
+    ".github/ci/classify.json",
+    ".github/ci/classify.mjs",
+    ".github/ci/gate.mjs",
+    ".github/ci/lint-skills.mjs",
+    ".github/ci/quarantine.json",
+    ".github/ci/test-baseline.json",
+    ".github/ci/test-baseline.mjs",
+    ".github/dependabot.yml",
+    ".gitleaks.toml",
+    ".markdownlint-cli2.yaml",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "SECURITY.md",
+    "mise.toml"
+  ]
+}

@@ -1,0 +1,54 @@
+# Seeded by ci-setup 0.1.0 on 2026-11-26. This file now belongs to the repo.
+# `mise run check` is the Gate: it runs the same tasks as CI. See "Build and test commands" in AGENTS.md.
+# mise.lock pins the exact version and checksum of every tool in [tools]. After a version change,
+# run `mise lock --platform linux-x64,<your platform>` and commit mise.lock with mise.toml.
+min_version = "2026.11.7"
+
+[settings]
+# Read and write mise.lock, so CI and the local Gate install the same tool releases.
+lockfile = true
+
+[tools]
+node = "24"
+gitleaks = "8.30.1"
+"npm:markdownlint-cli2" = "0.24.1"
+actionlint = "1.7.12"
+zizmor = "1.32.0"
+shellcheck = "0.11.0"
+shfmt = "3.14.1"
+
+[tasks.secrets]
+description = "Secret scan: the diff from SCAN_BASE when it is set, else the whole tree"
+run = 'if [ -n "${SCAN_BASE:-}" ]; then gitleaks git --redact --exit-code 1 --log-opts="${SCAN_BASE}..HEAD"; else gitleaks dir --redact --exit-code 1 .; fi'
+
+[tasks.lint-docs]
+description = "Markdown lint (.markdownlint-cli2.yaml skips the paths that .gitignore ignores)"
+run = "markdownlint-cli2 '**/*.md' '#**/node_modules'"
+
+[tasks.lint-shell]
+description = "Shell lint (shellcheck) and format check (shfmt)"
+run = ["git ls-files -z '*.sh' '*.bash' | xargs -0 -r shellcheck", "shfmt -d ."]
+
+[tasks.lint-skills]
+description = "Check every SKILL.md: frontmatter, name, description and relative links"
+run = "node .github/ci/lint-skills.mjs"
+
+[tasks.lint-workflows]
+description = "Workflow lint: actionlint and zizmor, then gh actions-lock --verify"
+run = ["actionlint", "zizmor --offline .github/workflows", "gh actions-lock --verify"]
+
+[tasks."check:base"]
+description = "Checks that run in every repo, also before any stack files exist"
+run = ["mise run secrets", "mise run lint-docs", "mise run lint-workflows"]
+
+[tasks."check:stack"]
+description = "Checks that need the repo's shell and skill files"
+run = ["mise run lint-shell", "mise run lint-skills"]
+
+[tasks."check:fast"]
+description = "check:base, then check:stack"
+run = ["mise run check:base", "mise run check:stack"]
+
+[tasks.check]
+description = "The Gate: the same checks as CI, skipped where the change does not need them"
+run = "node .github/ci/gate.mjs"

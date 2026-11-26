@@ -1,0 +1,21 @@
+# Seeded by ci-setup 0.1.0 on 2026-11-26. This file now belongs to the repo.
+# markdownlint-cli2 reads this file for `mise run lint-docs`, locally and in CI.
+# gitignore: skip every path that .gitignore ignores, so the local Gate and CI lint the same files.
+gitignore: true
+ignores:
+  # Prompt files are model input. Their tags (<system-reminder>, <message>) and bare code
+  # fences are part of the prompt, so a lint fix there would change what the model reads.
+  - "prompts/**"
+  # A symlink to .agents/skills: without this entry each skill file is linted twice.
+  - ".claude/skills/**"
+config:
+  default: true
+  # Line length: prose wraps at any width.
+  MD013: false
+  # A file may start without a top-level heading (CLAUDE.md holds only an import line).
+  MD041: false
+  # Inline HTML: only the elements of the README header (logo, screenshot, captions).
+  MD033:
+    allowed_elements: [p, img, picture, source, sub]
+  # Spaces inside code spans: the skill docs show literal input such as `- ` on purpose.
+  MD038: false

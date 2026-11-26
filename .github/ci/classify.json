@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "flags": {
+    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/references/**", "**/scripts/**", "bin/**", ".agents/skills/**"],
+    "docs": ["**/*.md", "**/*.mdx", "**/*.txt", "prompts/**", "**/*.prompt*"],
+    "workflows": [".github/**"]
+  },
+  "always_all": [".github/**", "mise.toml", "mise.lock"],
+  "requires": {
+    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/scripts/**", "bin/**"]
+  },
+  "ignore": ["LICENSE", "LICENSE.*", ".gitignore", "reports/**", "test-results/**", "playwright-report/**", "coverage/**"],
+  "warn_languages": {
+    "typescript": ["package.json", "tsconfig*.json", "**/*.{ts,tsx}"],
+    "python": ["**/*.py", "pyproject.toml", "uv.lock", "requirements*.txt"],
+    "rust": ["Cargo.toml", "**/*.rs"],
+    "solidity": {"patterns": ["foundry.toml", "hardhat.config.*", "**/*.sol"], "v1": false},
+    "go": {"patterns": ["go.mod"], "v1": false},
+    "jvm": {"patterns": ["pom.xml", "build.gradle*"], "v1": false},
+    "dotnet": {"patterns": ["**/*.csproj"], "v1": false},
+    "ruby": {"patterns": ["Gemfile"], "v1": false},
+    "php": {"patterns": ["composer.json"], "v1": false},
+    "terraform": {"patterns": ["**/*.tf"], "v1": false}
+  },
+  "gate": {
+    "always": ["secrets", "lint-docs"],
+    "workflows": ["lint-workflows"],
+    "code": ["lint-shell", "lint-skills"]
+  }
+}

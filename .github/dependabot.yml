@@ -1,0 +1,14 @@
+# Seeded by ci-setup 0.1.0 on 2026-11-26. This file now belongs to the repo.
+# Every entry waits 7 days after a release (cooldown). CODEOWNERS routes these PRs to the owner.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
