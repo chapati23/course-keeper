@@ -1,0 +1,854 @@
+#!/usr/bin/env python3
+"""Course Keeper's desktop card, driven by the desktop stand-in (control start --surface
+desktop) with scripted model replies. The stand-in runs the desktop app's own pinned Claude
+Code (or the binary given by --cli) and plays the app's role over the app's stream-json
+protocol. It never starts the desktop app.
+
+Four runs. The main run starts with --attach-later. It proves that the plugin loads under
+the CLI, that a person's turn before ui_attach records "no surface is attached", the
+card's parts in the tree that the CLI returns for ui_render at the app's maxRows 12, each
+button through ui_press (Details, Tell the agent, False alarm, the close Button), the
+notification call without CLAUDE_CODE_NOTIFICATIONS_HOST, the ui_toast frame for a new
+standing instruction, an instruction alert's headline, off, check and on, a short learn,
+and it records what the plugin's haiku call holds when the frame carries a leading
+system-reminder block. A fresh run without the doctor proves that a frame without
+client_platform is no person and that the app's envelope is one. A run with --max-rows
+below CARD_ROWS proves the short-band order. A run with --notifications-host and
+--columns 1 proves the ui_notify frame and the card's Buttons at the app's first measure.
+
+  journeys/desktop [--cli PATH]
+
+  --cli PATH   the CLI that each run's `control start --surface desktop` runs (default: the
+               desktop app's newest verified build)
+
+What this proves: the tree the CLI returns, the frames it sends and what the plugin stores,
+under the stand-in. It does not prove how the app paints the card (layout, line cuts,
+colours, the close mark), its keyboard handling or focus, its in-app toast or native banner,
+or the scroll that Details asks for. A scripted reply proves how the plugin handles a reply,
+not what a real model detects.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import (MARKERS, JourneyFailure, ask, deviation, expect, final, flat, has,  # noqa: E402
+                 is_check, is_extract, is_main, is_messages, journey, learn_draft,
+                 message_in, note_text, notice, script_turn, second_run, section, step,
+                 unscripted)
+
+REPO = Path(__file__).resolve().parents[4]
+# hooks/register.tsx: `const CARD_ROWS = 10`, "The rows the card takes in the band with its
+# sentence above the buttons ... A shorter band moves the buttons up." Copied here, not
+# imported: a change to it must show as a failure.
+CARD_ROWS = 10
+APP_MAX_ROWS = 12  # the app's maxRows for AbovePrompt (2.json, uiRender)
+LQ, RQ = "“", "”"
+CLOSE = "✕"
+
+NO_SURFACE = "did not run: no surface is attached"
+CHECKS_OFF = "did not run: checks are off"
+ALERTS_HEADING = "## Alerts the person has already received in this session"
+HOW_HEADING = "# How to check"
+INTENDED = "false alarm (the person says this is no deviation, or wanted it)"
+FRAMED = "The course-keeper plugin sent a message:"
+RULE_1 = "One module computes every amount"
+HEADLINE_1 = f"Breaks rule: {LQ}{RULE_1}{RQ}"
+TITLE_1 = f"Course Keeper: this session breaks invariant 1 ({RULE_1})"
+
+P0 = "List what the invoice exporter writes today."
+A0 = "The exporter writes one CSV file per client into the out folder."
+
+PROMPT_1 = "Fix the rounding bug in the invoice exporter."
+AGENT_1 = "I will round the invoice totals in the **exporter**. That is a one-line fix."
+ALERT_1 = {
+    "reference": "invariant 1",
+    "alert": "The agent plans to round invoice totals inside the exporter, but the vision says "
+             "one module computes every amount.",
+    "instead": "Round money only in the one module that computes every amount.",
+    # Markdown marks: the card quotes the words without them (plainQuote).
+    "evidence": "I will round the invoice totals in the **exporter**.",
+    "note": "The agent plans to round invoice totals in the exporter. Invariant 1 says that one "
+            "module computes every amount and that no other code rounds money. Move the "
+            "rounding into that module instead.",
+}
+QUOTE_1 = "I will round the invoice totals in the exporter."  # ALERT_1's evidence, plain
+AGENT_NOTE = "Understood. I will move the rounding into the module that computes every amount."
+
+PROMPT_2 = "Add a total line to the invoice exporter."
+AGENT_2 = "I will round the total line in the exporter before it writes the file."
+ALERT_2 = {
+    "reference": "invariant 1",
+    "alert": "The agent plans to round the total line in the exporter, but the vision says no "
+             "code outside the one amount module rounds money.",
+    "instead": "Let the one amount module compute and round the total line.",
+    "evidence": AGENT_2,
+    "note": "The agent plans to round the total line in the exporter. Invariant 1 says that one "
+            "module computes every amount. Compute the total line in that module.",
+}
+PROMPT_3 = "Write the invoice files to the out folder."
+AGENT_3 = "The exporter now writes the invoice files to the out folder."
+PROMPT_4 = "Export the invoices as PDF files."
+AGENT_4 = "I will round each line amount in the PDF writer."
+ALERT_4 = {
+    "reference": "invariant 1",
+    "alert": "The agent plans to round each line amount in the PDF writer, but the vision says "
+             "one module computes every amount.",
+    "instead": "Take each rounded line amount from the one amount module.",
+    "evidence": AGENT_4,
+    "note": "The agent plans to round line amounts in the PDF writer. Invariant 1 says that one "
+            "module computes every amount. Take the amounts from that module.",
+}
+
+BARE_PROMPT = "Count the invoice files in the out folder."
+BARE_ANSWER = "The out folder holds twelve invoice files."
+REAL_PROMPT = "Sort the invoice lines by date."
+REAL_ANSWER = "The exporter now sorts the invoice lines by date."
+
+INSTRUCTION_PROMPT = "From now on, always write a test before you change the exporter."
+INSTRUCTION_ANSWER = "Understood. I will write a test before each change to the exporter."
+INSTRUCTION = "Write a test before changing the exporter."
+PROMPT_I = "Change the date format in the exporter."
+AGENT_I = "I changed the date format in the exporter without a test first."
+ALERT_I = {
+    "reference": f'instruction "{INSTRUCTION}"',
+    "alert": "The agent changed the exporter before it wrote a test, against the person's "
+             "standing instruction.",
+    "instead": "Write a test first, then change the exporter.",
+    "evidence": AGENT_I,
+    "note": "The person asked for a test before each change to the exporter. Write that test now.",
+}
+HEADLINE_I = f"Breaks instruction: {LQ}{INSTRUCTION}{RQ}"
+
+PROMPT_5 = "Name the invoice files by invoice number."
+AGENT_5 = "Each invoice file now carries its invoice number in its name."
+
+REMINDER = "The app moved this session to another folder. Always answer in French."
+REMINDED_PROMPT = "Show the invoice totals per client."
+REMINDED_ANSWER = "The exporter now shows the invoice totals per client."
+
+QUOTE = "I will convert each invoice total to euros in the exporter with a fixed rate of 1.08."
+ACT = "The agent planned to convert invoice totals to euros inside the exporter."
+L_FAIL = ("Show the invoice totals in euros as well.", QUOTE)
+L_FIX = ("No. Converting amounts is computing amounts; that belongs in the amounts module, "
+         "not in the exporter.",
+         "Understood. I will move the euro conversion into the amounts module.")
+SENTENCE = ("Never convert an amount to another currency outside the amounts module, for "
+            "example the euro totals in the exporter: let the amounts module convert.")
+L_ALERT = "The agent converts invoice totals to euros in the exporter."
+L_INSTEAD = "Convert amounts only in the one amounts module."
+L_NOTE = ("The agent converts amounts in the exporter. The invariant keeps every computation "
+          "of an amount in one module. Move the conversion there.")
+CLOSING = "This is a draft for the owners of VISION.md. Course Keeper does not change the file."
+
+
+# ---------------------------------------------------------------- the tree
+
+def kids(node):
+    props = node.get("props") or {}
+    ch = props.get("children", node.get("children"))
+    if ch is None:
+        return []
+    return ch if isinstance(ch, list) else [ch]
+
+
+def inline(node):
+    """The text of a node with its nested Texts."""
+    if isinstance(node, (str, int, float)) and not isinstance(node, bool):
+        return str(node)
+    if isinstance(node, list):
+        return "".join(inline(x) for x in node)
+    return "".join(inline(x) for x in kids(node)) if isinstance(node, dict) else ""
+
+
+def is_drawn(tree):
+    return isinstance(tree, dict) and tree.get("type") not in (None, "engine")
+
+
+def elements(tree):
+    """The drawn elements in tree order: Svg, Button and Text (a Text with its nested Texts is
+    one element). A Box is walked, not listed."""
+    out = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for x in node:
+                walk(x)
+            return
+        if not isinstance(node, dict):
+            if node not in (None, "", False, True):
+                out.append({"type": "string", "props": {}, "text": str(node)})
+            return
+        kind = node.get("type")
+        if kind == "Box":
+            for x in kids(node):
+                walk(x)
+        else:
+            out.append({"type": kind, "props": node.get("props") or {}, "press": node.get("press"),
+                        "text": inline(node)})
+
+    if is_drawn(tree):
+        walk(tree)
+    return out
+
+
+def buttons(tree):
+    return [e for e in elements(tree) if e["type"] == "Button"]
+
+
+def button(tree, key):
+    hit = [e for e in buttons(tree) if e["props"].get("key") == key]
+    return hit[0] if len(hit) == 1 else None
+
+
+def shown_text(e):
+    """What a Button draws: its label, or its text when it has no label."""
+    label = e["props"].get("label")
+    return str(label) if label is not None else e["text"]
+
+
+def has_handle(e):
+    press = e.get("press") or {}
+    return press.get("plugin") == "course-keeper" and isinstance(press.get("handle"), int)
+
+
+def roles(tree, a, headline):
+    """Each drawn element named by its part of the card, in tree order."""
+    names = {headline: "headline", a["alert"]: "sentence", "Course Keeper": "brand"}
+    out = []
+    for e in elements(tree):
+        if e["type"] == "Svg":
+            out.append("wheel")
+        elif e["type"] == "Button":
+            out.append(e["props"].get("key") or "button:" + shown_text(e))
+        elif e["text"] in names:
+            out.append(names[e["text"]])
+        elif e["text"].startswith("Instead: "):
+            out.append("instead")
+        elif e["text"].startswith("Agent wrote: "):
+            out.append("quote")
+        elif e["text"].startswith("For the agent: "):
+            out.append("note")
+        else:
+            out.append("text: " + e["text"][:60])
+    return out
+
+
+def brief(tree):
+    return json.dumps([{k: v for k, v in e.items() if k != "props" or v} for e in elements(tree)]
+                      if is_drawn(tree) else tree, ensure_ascii=False)[:3000]
+
+
+def card_shows(tree, a):
+    """True when the tree draws the card of alert a (its sentence)."""
+    return any(e["type"] == "Text" and e["text"] == a["alert"] for e in elements(tree))
+
+
+def poll_tree(run, ok, what, expected, timeout=10, save=None):
+    """Polls `control screen --tree` until ok(tree); a timeout fails on the promise `what`."""
+    deadline = time.monotonic() + timeout
+    while True:
+        tree = run.tree()
+        if ok(tree):
+            if save:
+                run.tree(save=save)
+            return tree
+        if time.monotonic() >= deadline:
+            run.tree(save=(save or "tree") + "-timeout")
+            raise JourneyFailure(what, expected, brief(tree))
+        time.sleep(0.2)
+
+
+def card_closed_parts(tree, a, headline, tight=False):
+    """The card's parts while Details is closed, each as a named assertion on the tree."""
+    expect(tree.get("type") == "Box", "the card is one Box", "a root Box", brief(tree))
+    els = elements(tree)
+    wheel = [e for e in els if e["type"] == "Svg"]
+    expect(len(wheel) == 1 and wheel[0]["props"].get("alt") == "Course Keeper"
+           and str(wheel[0]["props"].get("source", "")).startswith("<svg"),
+           "the card shows the Course Keeper wheel (one Svg, alt 'Course Keeper')",
+           "one Svg with alt 'Course Keeper' and an <svg> source", brief(tree))
+    head = [e for e in els if e["type"] == "Text" and e["text"] == headline]
+    expect(len(head) == 1 and head[0]["props"].get("weight") == "semibold",
+           f"one strong line names what the session breaks: {headline!r} (weight semibold)",
+           headline + ", weight semibold", brief(tree))
+    close = button(tree, "dismiss")
+    expect(close is not None and close["props"].get("role") == "dismiss"
+           and shown_text(close) == CLOSE and close["props"].get("label") in (None, CLOSE)
+           and has_handle(close),
+           "the close Button has role dismiss, draws the mark ✕ and no word, and carries a "
+           "press handle", f"Button key dismiss, role dismiss, text {CLOSE!r}, label none or "
+           f"{CLOSE!r}, press handle", brief(tree))
+    sentence = [e for e in els if e["type"] == "Text" and e["text"] == a["alert"]]
+    expect(len(sentence) == 1 and sentence[0]["props"].get("maxLines") == 3,
+           "closed, the tree limits the one sentence to three lines (maxLines 3)",
+           a["alert"] + " with maxLines 3", brief(tree))
+    for key, label, variant in (("tell", "Tell the agent", "primary"), ("details", "Details", None),
+                                ("false-alarm", "False alarm", None)):
+        b = button(tree, key)
+        expect(b is not None and b["props"].get("label") == label
+               and b["props"].get("variant") == variant and has_handle(b),
+               f"the card's Button {label!r} is drawn with a press handle"
+               + (f" (variant {variant})" if variant else ""),
+               f"one Button key {key!r}, label {label!r}, variant {variant}, press handle",
+               brief(tree))
+    brand = [e for e in els if e["type"] == "Text" and e["text"] == "Course Keeper"]
+    expect(len(brand) == 1 and brand[0]["props"].get("size") == "caption",
+           "the plugin's name is small (size caption)", "one Text 'Course Keeper', size caption",
+           brief(tree))
+    keyed = [(shown_text(b), b["props"]["hotkey"]) for b in buttons(tree)
+             if b["props"].get("hotkey") is not None]
+    expect(not keyed, "no Button carries a number key (no hotkey)", "none", json.dumps(keyed))
+    focused = [shown_text(b) for b in buttons(tree) if b["props"].get("autoFocus")]
+    expect(not focused, "no Button takes the focus first (no autoFocus)", "none",
+           json.dumps(focused))
+    every = " ".join(e["text"] for e in els)
+    expect("ctrl+x tab" not in every, "the card shows no terminal key hint ('ctrl+x tab')",
+           "no 'ctrl+x tab'", every)
+    expect("─" not in every, "the tree holds no character rule of the terminal frame (no '─')",
+           "no '─'", every)
+    for part in ("Instead: ", "Agent wrote: ", "For the agent: "):
+        expect(not any(e["text"].startswith(part) for e in els),
+               f"closed, the card holds no {part.strip()!r} part", "none", brief(tree))
+    order = roles(tree, a, headline)
+    middle = (["dismiss", "tell", "details", "false-alarm", "brand", "sentence"] if tight
+              else ["dismiss", "sentence", "tell", "details", "false-alarm", "brand"])
+    want = ["wheel", "headline"] + middle
+    expect(order == want,
+           "the wheel, the headline and ✕ come first; "
+           + ("the buttons come before the sentence (a short band)" if tight
+              else "then the sentence; then the buttons, with the plugin's name at their end"),
+           json.dumps(want), json.dumps(order))
+    return els
+
+
+# ---------------------------------------------------------------- run plumbing
+
+def frames(run):
+    path = Path(run.evidence, "frames.jsonl")
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def render_props(run):
+    """The props of the newest ui_render request that the host sent."""
+    sent = [f["frame"]["request"] for f in frames(run) if f["dir"] == "host->cli"
+            and (f["frame"].get("request") or {}).get("subtype") == "ui_render"]
+    return sent[-1]["props"] if sent else None
+
+
+def debug_lines(run, needle):
+    path = Path(run.evidence, "cli-debug.log")
+    text = path.read_text(errors="replace") if path.exists() else ""
+    return [line.strip() for line in text.splitlines() if needle in line]
+
+
+def poll(read, ok, what, expected, timeout=10):
+    """Polls read() until ok(value); a timeout fails on the promise `what`."""
+    deadline = time.monotonic() + timeout
+    while True:
+        value = read()
+        if ok(value):
+            return value
+        if time.monotonic() >= deadline:
+            raise JourneyFailure(what, expected, json.dumps(value)[:3000])
+        time.sleep(0.2)
+
+
+def ended_after(started):
+    def matches(record):
+        last = record.get("lastCheck") or {}
+        return last.get("at", 0) >= started and record.get("checkingSince") is None
+    return matches
+
+
+def person_turn(run, prompt, answer, label, checked=True, extract=True, first_prompt=False):
+    """A person's turn in the app's envelope: the answer shows, the store has a person, the
+    haiku call holds the prompt, and the turn's check ends. With checked, the check ran: it
+    did not stop at "no surface is attached", and a check request carries the answer.
+    Returns (mark, record)."""
+    mark, started = run.last_seq(), time.time() * 1000
+    ask(run, prompt, answer, label)
+    # Only a run whose first person prompt is this one proves the promise: elsewhere the
+    # doctor's /course-keeper or an earlier turn already marked the session.
+    run.wait_store(lambda r: r.get("hasPerson") is True,
+                   "a desktop person counts: a prompt in the app's envelope marks the session "
+                   "as having a person (hasPerson)" if first_prompt else
+                   "the session has a person (hasPerson, set by this or an earlier prompt)",
+                   save="store-person-" + label)
+    if extract:
+        run.wait_request(lambda r: r["seq"] > mark and is_extract(r) and message_in(r) == prompt,
+                         "a desktop person counts: the prompt starts the haiku call")
+    record = run.wait_store(ended_after(started), f"the check of {label} ended",
+                            save="store-" + label)
+    if checked:
+        outcome = record["lastCheck"]["outcome"]
+        expect(outcome != NO_SURFACE, "an attached desktop surface lets a person's turn's check "
+               "run", "an outcome other than " + repr(NO_SURFACE), outcome)
+        run.wait_request(lambda r: r["seq"] > mark and is_check(r) and final(answer) in r["last_user"],
+                         f"the check request of {label}")
+    return mark, record
+
+
+def alert_turn(run, prompt, answer, a, label):
+    """A person's turn whose check finds alert a: the store holds a as the current alert,
+    then the tree draws its card. Returns the tree."""
+    script_turn(run, prompt, answer, haiku="none", check=deviation(**a))
+    person_turn(run, prompt, answer, label)
+    run.wait_store(lambda r: (r.get("current") or {}).get("evidence") == a["evidence"],
+                   "the check's deviation is the stored current alert", save="store-current-" + label)
+    return poll_tree(run, lambda t: card_shows(t, a),
+                     "the stored alert is drawn as a card: the tree that the CLI returns for "
+                     "ui_render on the desktop surface holds its sentence",
+                     a["alert"], save="card-" + label)
+
+
+def card_gone(run, what, label):
+    return poll_tree(run, lambda t: not is_drawn(t), what, "no tree (the CLI draws nothing)",
+                     save=label)
+
+
+def answer_of(record, a):
+    return next((x["answer"] for x in record.get("alerts") or [] if x["evidence"] == a["evidence"]),
+                None)
+
+
+def refused(run, args, what, needle):
+    result = run.ctl(*args, check=False)
+    expect(result.returncode == 1 and needle in result.stderr, what, f"exit 1 and {needle!r}",
+           f"exit {result.returncode}: {(result.stdout + result.stderr).strip()}")
+    return result.stderr.strip()
+
+
+# ---------------------------------------------------------------- the journey
+
+def make_journey(cli):
+    def desktop(run):
+        vision_file = Path(run.dir, "scratch/project/VISION.md")
+        seed = vision_file.read_bytes()
+        n = iter(range(1, 100))
+
+        report = Path(run.evidence, "doctor-report.txt").read_text()
+        line = next((x for x in report.splitlines() if x.startswith("ok   version:")), "")
+        # doctor writes "the desktop app's pinned build: PATH" or "another binary, not the desktop
+        # app's pinned build: PATH".
+        pinned = "; the desktop app's pinned build: " in line
+        step(f"{next(n)} the plugin loads under "
+             + ("the desktop app's pinned CLI" if pinned
+                else "the CLI given by --cli, not the desktop app's pinned build"))
+        spawn = json.loads(Path(run.evidence, "spawn.json").read_text())
+        init = json.loads(Path(run.evidence, "initialize.json").read_text())
+        version = init["response"]["claude_code_version"]
+        path = spawn["argv"][0]
+        expect(version in line and path in line, "doctor names the CLI's version and path",
+               f"{version} and {path}", line)
+        expect(not cli or path == os.path.abspath(os.path.expanduser(cli[1])),
+               "the run ran the CLI that --cli names", cli, path)
+        expect("not attached yet" in report, "doctor accepts a run that is not attached yet",
+               "surfaces: not attached yet", report)
+        kind = "the desktop app's pinned build" if pinned else "another binary (--cli)"
+        Path(run.evidence, "cli.txt").write_text(f"version {version}\npath {path}\n{kind}\n")
+        print(f"CLI {version} at {path} ({kind})", flush=True)
+
+        step(f"{next(n)} a frame in the app's envelope (client_platform desktop_app) counts as a "
+             "person's; a frame without client_platform does not")
+        with second_run("--surface", "desktop", *cli, parent=run, label="person-run",
+                        doctor=False) as fresh:
+            script_turn(fresh, BARE_PROMPT, BARE_ANSWER, haiku="none", check="verdict: none")
+            fresh.ctl("send", fresh.dir, BARE_PROMPT, "--bare")
+            fresh.wait("⏺ " + BARE_ANSWER, after="❯ " + BARE_PROMPT, save="bare-turn")
+            record = fresh.store(save="store-after-bare")
+            expect(not (record or {}).get("hasPerson"), "a frame without client_platform is no "
+                   "person: nothing is recorded", "no record, or hasPerson false",
+                   json.dumps(record))
+            mark = fresh.last_seq()
+            script_turn(fresh, REAL_PROMPT, REAL_ANSWER, haiku="none", check="verdict: none")
+            person_turn(fresh, REAL_PROMPT, REAL_ANSWER, "real-turn", first_prompt=True)
+            late = [(r["seq"], r["model"], r["matched"]) for r in fresh.requests()
+                    if is_messages(r) and ((is_extract(r) and message_in(r) == BARE_PROMPT)
+                                           or (is_check(r) and final(BARE_ANSWER) in r["last_user"]))]
+            expect(not late, "a frame without client_platform starts no haiku call and no check",
+                   "none", json.dumps(late))
+            bare_main = [r["seq"] for r in fresh.requests() if r["seq"] <= mark and is_main(r)]
+            expect(len(bare_main) == 1, "the bare frame's turn ran (one main request)", "1",
+                   json.dumps(bare_main))
+            unscripted(fresh)
+
+        step(f"{next(n)} before ui_attach a person's turn records 'no surface is attached'; "
+             "ui_attach answers surfaces [\"desktop\"]")
+        view = run.screen()
+        expect("(not attached" in view, "the host has not attached", "(not attached ...)", view)
+        script_turn(run, P0, A0, haiku="none", check=None)
+        mark, record = person_turn(run, P0, A0, "turn-0", checked=False)
+        expect(record["lastCheck"]["outcome"] == NO_SURFACE,
+               "before ui_attach, a person's turn records 'did not run: no surface is attached'",
+               NO_SURFACE, json.dumps(record["lastCheck"]))
+        checks = [r["seq"] for r in run.requests() if r["seq"] > mark and is_check(r)]
+        expect(not checks, "before ui_attach, a person's turn sends no check request", "none",
+               json.dumps(checks))
+        surfaces = run.attach()
+        expect(surfaces == 'surfaces: ["desktop"]', "ui_attach answers the desktop surface",
+               'surfaces: ["desktop"]', surfaces)
+        run.expect_wait("(nothing drawn)", "after ui_attach the host renders AbovePrompt and the "
+                        "CLI draws nothing while no alert is open", visible=True, timeout=10,
+                        save="attached")
+
+        step(f"{next(n)} the tree that the CLI returns for ui_render at maxRows {APP_MAX_ROWS} "
+             "holds the card's parts")
+        tree = alert_turn(run, PROMPT_1, AGENT_1, ALERT_1, "turn-1")
+        card_closed_parts(tree, ALERT_1, HEADLINE_1)
+        props = render_props(run)
+        expect(props and props["maxRows"] == APP_MAX_ROWS and props["bodyColumns"] == 96,
+               "the host rendered with maxRows 12 (the app's) and bodyColumns 96 (set by the "
+               "harness)", "maxRows 12, bodyColumns 96", json.dumps(props))
+        record = run.store(save="store-1")
+        expect((record["current"] or {}).get("title") == RULE_1 and not record.get("showDetails")
+               and record["lastCheck"]["outcome"] == "verdict: deviation (invariant 1)",
+               "the store holds alert 1 with its rule's title, Details closed",
+               f"current.title {RULE_1!r}, showDetails false, outcome deviation (invariant 1)",
+               json.dumps({k: record.get(k) for k in ("current", "showDetails", "lastCheck")}))
+        view = run.screen(visible=True, save="card-turn-1-text")
+        for text in ("⟨svg: Course Keeper⟩", HEADLINE_1,
+                     f"[ {CLOSE} ]  ⟨role dismiss⟩",
+                     ALERT_1["alert"] + "  ⟨maxLines 3:",
+                     "[ Tell the agent ]  ⟨variant primary⟩", "[ Details ]",
+                     "[ False alarm ]", "Course Keeper"):
+            expect(text in view, f"control screen renders the tree's part {text!r}", text, view)
+        refusal = refused(run, ("press", run.dir, "1"),
+                          "press 1 fails by name while the card is drawn: no Button carries "
+                          "hotkey 1", "No drawn Button carries hotkey '1'")
+        expect("[ Tell the agent ]" in refusal, "the refusal lists the drawn buttons",
+               "[ Tell the agent ]", refusal)
+        record = run.store()
+        expect((record.get("current") or {}).get("evidence") == ALERT_1["evidence"]
+               and answer_of(record, ALERT_1) is None,
+               "a refused press answers nothing: alert 1 stays open", "alert 1 open, no answer",
+               json.dumps(record.get("current")))
+
+        step(f"{next(n)} Details: the tree gains Instead, Agent wrote and the note under the "
+             "buttons; a second press removes them")
+        label = run.press("Details", "press Details finds the Details Button")
+        expect(label == "Details", "press Details presses Details", "Details", label)
+        run.wait_store(lambda r: r.get("showDetails") is True and r["current"] is not None,
+                       "Details stores showDetails true and keeps the alert open",
+                       save="store-details-open")
+        note = "For the agent: " + ALERT_1["note"]
+        tree = poll_tree(run, lambda t: any(e["text"] == note for e in elements(t)),
+                         "Details opens the note in the tree", note, save="details-open")
+        order = roles(tree, ALERT_1, HEADLINE_1)
+        want = ["wheel", "headline", "dismiss", "sentence", "tell", "details", "false-alarm",
+                "brand", "instead", "quote", "note"]
+        expect(order == want, "Details opens Instead, Agent wrote and the note under the buttons",
+               json.dumps(want), json.dumps(order))
+        texts = [e["text"] for e in elements(tree)]
+        for text in ("Instead: " + ALERT_1["instead"], f"Agent wrote: {LQ}{QUOTE_1}{RQ}", note):
+            expect(text in texts, f"Details shows {text!r} (the quote in curly quotes, without "
+                   "Markdown marks)", text, json.dumps(texts, ensure_ascii=False))
+        sentence = next(e for e in elements(tree) if e["text"] == ALERT_1["alert"])
+        expect(sentence["props"].get("maxLines") is None,
+               "with Details open the sentence shows whole (no maxLines)", "no maxLines",
+               json.dumps(sentence["props"]))
+        details = button(tree, "details")
+        expect(details and details["props"].get("label") == "Hide details",
+               "with Details open its Button reads 'Hide details'", "Hide details", brief(tree))
+        run.screen(visible=True, save="details-open-text")
+        label = run.press("details", "press details finds the Hide details Button")
+        expect(label == "Hide details", "the second press presses Hide details", "Hide details",
+               label)
+        run.wait_store(lambda r: r.get("showDetails") is False and r["current"] is not None,
+                       "a second press of Details closes the parts (showDetails false) and keeps "
+                       "the alert open", save="store-details-closed")
+        tree = poll_tree(run, lambda t: not any(e["text"].startswith("For the agent: ")
+                                                for e in elements(t)),
+                         "a second press of Details removes the parts from the tree",
+                         "no 'For the agent:' part", save="details-closed")
+        card_closed_parts(tree, ALERT_1, HEADLINE_1)
+
+        step(f"{next(n)} Tell the agent: the store records the answer, the tree is empty, the "
+             "next main request carries the note")
+        run.reply(note_text(ALERT_1), AGENT_NOTE, times=1)
+        run.reply(final(AGENT_NOTE), "verdict: none", times=1)
+        mark = run.last_seq()
+        label = run.press("Tell the agent", "press finds the Tell the agent Button")
+        expect(label == "Tell the agent", "press presses Tell the agent", "Tell the agent", label)
+        record = run.wait_store(lambda r: answer_of(r, ALERT_1) is not None,
+                                "Tell the agent answers alert 1", save="store-told")
+        expect(answer_of(record, ALERT_1) == "told the agent",
+               "Tell the agent records 'told the agent'", "told the agent",
+               answer_of(record, ALERT_1))
+        card_gone(run, "after Tell the agent the tree is empty (the card closes)", "told-closed")
+        sent = run.wait_request(lambda r: r["seq"] > mark and is_main(r),
+                                "Tell the agent sends the note as the next main request")
+        framed = FRAMED + " " + note_text(ALERT_1)
+        expect(framed in flat(sent["last_user"]), "the next main request carries the note as a "
+               "message from the plugin", framed, sent["last_user"][:2000])
+        run.expect_wait("▸ Prompt from the course-keeper plugin: " + FRAMED,
+                        "the CLI echoes the note as a prompt from the course-keeper plugin "
+                        "(the session transcript's origin)", timeout=15, save="told-prompt")
+        run.expect_wait("⏺ " + AGENT_NOTE, "the agent answers the plugin's note",
+                        after="▸ Prompt from the course-keeper plugin", timeout=30,
+                        save="told-reply")
+        run.wait_store(lambda r: r["lastCheck"]["outcome"] == "verdict: none" and
+                       r.get("checkingSince") is None, "the plugin's turn is checked", timeout=30)
+        noted = [r["seq"] for r in run.requests() if r["seq"] > mark and "haiku" in (r["model"] or "")]
+        expect(not noted, "the plugin's note starts no haiku call", "none", json.dumps(noted))
+
+        step(f"{next(n)} False alarm: one press relabels the Button 'Confirm false alarm'; the "
+             "second records the false alarm")
+        alert_turn(run, PROMPT_2, AGENT_2, ALERT_2, "turn-2")
+        label = run.press("False alarm", "press finds the False alarm Button")
+        expect(label == "False alarm", "press presses False alarm", "False alarm", label)
+        record = run.wait_store(lambda r: r.get("confirmFalseAlarm") is True
+                                or r.get("current") is None,
+                                "one press of False alarm settles in the store",
+                                save="store-confirm")
+        expect(record.get("confirmFalseAlarm") is True and record.get("current") is not None
+               and answer_of(record, ALERT_2) is None,
+               "one press of False alarm asks for a second: it stores confirmFalseAlarm, keeps "
+               "the alert open and records no answer", "confirmFalseAlarm true, alert 2 open",
+               json.dumps({k: record.get(k) for k in ("confirmFalseAlarm", "current")}))
+        tree = poll_tree(run, lambda t: (button(t, "false-alarm") or {"props": {}})["props"]
+                         .get("label") == "Confirm false alarm",
+                         "one press of False alarm relabels its Button 'Confirm false alarm'",
+                         "Confirm false alarm", save="false-alarm-confirm")
+        expect(card_shows(tree, ALERT_2), "the card stays after one press of False alarm",
+               ALERT_2["alert"], brief(tree))
+        label = run.press("Confirm false alarm", "press finds the Confirm false alarm Button")
+        expect(label == "Confirm false alarm", "the second press presses Confirm false alarm",
+               "Confirm false alarm", label)
+        record = run.wait_store(lambda r: answer_of(r, ALERT_2) is not None,
+                                "the second press answers alert 2", save="store-intended")
+        expect(answer_of(record, ALERT_2) == "intended",
+               "the second press records the false alarm ('intended')", "intended",
+               answer_of(record, ALERT_2))
+        card_gone(run, "after Confirm false alarm the tree is empty (the card closes)",
+                  "false-alarm-closed")
+        script_turn(run, PROMPT_3, AGENT_3, haiku="none", check="verdict: none")
+        mark, _ = person_turn(run, PROMPT_3, AGENT_3, "turn-3")
+        check = next(r for r in run.requests() if r["seq"] > mark and is_check(r))
+        told = section(check["last_user"], ALERTS_HEADING, HOW_HEADING)
+        line = (f'2. invariant 1: {ALERT_2["alert"]} Evidence: "{ALERT_2["evidence"]}". '
+                f"The person's answer: {INTENDED}.")
+        expect(line in told, "the next check hears the false alarm", line, told)
+
+        step(f"{next(n)} ✕: the store records 'dismissed' and the tree is empty; press, "
+             "focus and keys refuse by name when nothing is drawn")
+        alert_turn(run, PROMPT_4, AGENT_4, ALERT_4, "turn-4")
+        label = run.press(CLOSE, "press ✕ finds the Button with role dismiss")
+        expect(label == CLOSE, "press ✕ presses the close Button", CLOSE, label)
+        record = run.wait_store(lambda r: answer_of(r, ALERT_4) is not None,
+                                "✕ answers alert 4", save="store-dismissed")
+        expect(answer_of(record, ALERT_4) == "dismissed", "✕ records 'dismissed'", "dismissed",
+               answer_of(record, ALERT_4))
+        card_gone(run, "after ✕ the tree is empty (the card closes)", "dismissed-closed")
+        refused(run, ("press", run.dir, "dismiss"),
+                "press dismiss fails by name when nothing is drawn",
+                "No drawn Button has role dismiss")
+        refused(run, ("press", run.dir, "Details"), "press Details fails by name when nothing "
+                "is drawn", "No button 'Details' is drawn")
+        for command in (("focus", run.dir), ("keys", run.dir, "1")):
+            refused(run, command, f"{command[0]} refuses a desktop run and names press",
+                    "control press")
+
+        step(f"{next(n)} without CLAUDE_CODE_NOTIFICATIONS_HOST the CLI resolves $.ui.notify to "
+             "no-surface and sends no ui_notify frame")
+        shown = len(run.store()["alerts"])
+        lines = poll(lambda: debug_lines(run, "$.ui.notify (course-keeper)"),
+                     lambda v: len(v) >= shown,
+                     "the plugin calls $.ui.notify after each alert (the CLI's debug log)",
+                     f"{shown} lines, one per stored alert")
+        expect(len(lines) == shown and all(x.endswith("no-surface") for x in lines),
+               "without CLAUDE_CODE_NOTIFICATIONS_HOST each notification call resolves "
+               "no-surface", f"{shown} lines ending no-surface", json.dumps(lines))
+        notified = run.messages("ui_notify", save="ui-notify-none")
+        expect(not notified, "without CLAUDE_CODE_NOTIFICATIONS_HOST the CLI sends no ui_notify "
+               "frame", "none", json.dumps(notified))
+
+        step(f"{next(n)} a new standing instruction: the CLI sends a ui_toast frame with the "
+             "notice; an instruction alert's tree reads 'Breaks instruction: “…”'")
+        script_turn(run, INSTRUCTION_PROMPT, INSTRUCTION_ANSWER, haiku="- " + INSTRUCTION,
+                    check="verdict: none")
+        person_turn(run, INSTRUCTION_PROMPT, INSTRUCTION_ANSWER, "turn-instruction")
+        run.wait_store(lambda r: r["instructions"] == [INSTRUCTION], "the haiku reply adds the "
+                       "instruction", save="store-instruction")
+        toasts = poll(lambda: [m for m in run.messages("ui_toast") if INSTRUCTION in m.get("text", "")],
+                      bool, "a recorded instruction makes the CLI send a ui_toast frame with the "
+                      "notice", notice(INSTRUCTION), timeout=5)
+        expect(len(toasts) == 1 and toasts[0]["text"] == notice(INSTRUCTION)
+               and toasts[0].get("plugin") == "course-keeper",
+               "the ui_toast frame holds the notice text and names the plugin",
+               notice(INSTRUCTION), json.dumps(toasts))
+        run.messages("ui_toast", save="ui-toast")
+        tree = alert_turn(run, PROMPT_I, AGENT_I, ALERT_I, "turn-instruction-alert")
+        card_closed_parts(tree, ALERT_I, HEADLINE_I)
+        label = run.press("dismiss", "press dismiss finds the Button with role dismiss")
+        expect(label == CLOSE, "press dismiss presses the close Button", CLOSE, label)
+        record = run.wait_store(lambda r: answer_of(r, ALERT_I) is not None,
+                                "✕ answers the instruction alert", save="store-instruction-alert")
+        expect(answer_of(record, ALERT_I) == "dismissed", "✕ records 'dismissed' for the "
+               "instruction alert", "dismissed", answer_of(record, ALERT_I))
+        card_gone(run, "after ✕ the tree is empty (the instruction alert's card closes)",
+                  "instruction-alert-closed")
+        view = run.command("", "Last check:", "status-instruction")
+        want = f"Standing instructions: 1. {INSTRUCTION} Alerts in this session:"
+        expect(want in flat(view), "status lists the instruction", want, view)
+        view = run.command("forget 1", "Standing instruction 1 removed:", "forget-1")
+        expect(has(view, f'Standing instruction 1 removed: "{INSTRUCTION}"'),
+               "forget quotes the words", INSTRUCTION, view)
+        run.wait_store(lambda r: r["instructions"] == [] and r["withdrawn"] == [INSTRUCTION],
+                       "forget withdraws the instruction", save="store-forget")
+
+        step(f"{next(n)} off, check, on")
+        run.command("off", "Course Keeper checks are off for this session.", "off",
+                    what="off answers that checks are off")
+        run.wait_store(lambda r: r["isOff"] is True, "off stores isOff", save="store-off")
+        script_turn(run, PROMPT_5, AGENT_5, haiku="none", check=None)
+        mark, record = person_turn(run, PROMPT_5, AGENT_5, "turn-off", checked=False)
+        expect(record["lastCheck"]["outcome"] == CHECKS_OFF, "with checks off a turn's check does "
+               "not run", CHECKS_OFF, record["lastCheck"]["outcome"])
+        checks = [r["seq"] for r in run.requests() if r["seq"] > mark and is_check(r)]
+        expect(not checks, "with checks off a turn sends no check request", "none",
+               json.dumps(checks))
+        run.reply(final(AGENT_5), "verdict: none", times=1)
+        mark = run.last_seq()
+        view = run.command("check", "Check finished:", "manual-check", timeout=45,
+                           what="check runs while checks are off and prints its result")
+        expect(has(view, "Check finished: verdict: none."), "check prints its result",
+               "Check finished: verdict: none.", view)
+        checks = [r for r in run.requests() if r["seq"] > mark and is_check(r)]
+        expect(len(checks) == 1 and final(AGENT_5) in checks[0]["last_user"],
+               "the manual check sends one check request with the last answer", "1", len(checks))
+        run.command("on", "Course Keeper checks are on for this session.", "on",
+                    what="on answers that checks are on")
+        run.wait_store(lambda r: r["isOff"] is False, "on stores isOff false", save="store-on")
+
+        step(f"{next(n)} a leading system-reminder block reaches the haiku call (recorded "
+             "behaviour, not a promise)")
+        script_turn(run, REMINDED_PROMPT, REMINDED_ANSWER, haiku="none", check="verdict: none")
+        mark = run.last_seq()
+        started = time.time() * 1000
+        run.ctl("send", run.dir, REMINDED_PROMPT, "--reminder", REMINDER)
+        run.wait("⏺ " + REMINDED_ANSWER, after="❯ " + REMINDED_PROMPT, timeout=45,
+                 save="turn-reminder")
+        extract = run.wait_request(lambda r: r["seq"] > mark and is_extract(r)
+                                   and REMINDED_PROMPT in r["last_user"],
+                                   "the reminded prompt starts the haiku call")
+        Path(run.evidence, "reminder-extract.json").write_text(json.dumps(extract, indent=2))
+        held = message_in(extract) or ""
+        holds = REMINDER in held and "<system-reminder>" in held
+        run.wait_store(ended_after(started), "the reminded turn's check ended")
+        print("recorded behaviour: the haiku call's <message> "
+              f"{'holds' if holds else 'does not hold'} the system-reminder block: "
+              f"{json.dumps(held[:300])}", flush=True)
+        # Recorded only: the step never fails on what the haiku call holds.
+
+        step(f"{next(n)} learn, short")
+        for i, (prompt, answer) in enumerate((L_FAIL, L_FIX)):
+            script_turn(run, prompt, answer, haiku="none", check="verdict: none")
+            person_turn(run, prompt, answer, f"learn-turn-{i + 1}")
+        run.reply(MARKERS["learn"], learn_draft(SENTENCE, "invariant 1", QUOTE, ACT), times=1)
+        view = run.command("learn", "If this is the act: /course-keeper learn yes", "learn",
+                           timeout=45, what="learn answers with the act it read")
+        for text in ("Course Keeper read this as the act you corrected:", ACT,
+                     f"The agent's words: \"{QUOTE}\""):
+            expect(has(view, text), f"learn shows {text!r}", text, view)
+        expect(not has(view, SENTENCE) and "Never convert" not in view,
+               "learn does not show the sentence yet", "no sentence", view)
+        run.wait_store(lambda r: (r.get("learn") or {}).get("sentence") == SENTENCE,
+                       "the store holds the scripted draft", save="store-draft")
+        # The control and verify calls test the corrected turn; every earlier-turn test answers none.
+        run.reply("AGENT: " + QUOTE, "verdict: none", times=1, unless=[SENTENCE])
+        run.reply("AGENT: " + QUOTE, deviation("invariant 1", L_ALERT, L_INSTEAD, QUOTE, L_NOTE),
+                  times=1)
+        run.reply(MARKERS["excerpt"], "verdict: none")
+        view = run.command("learn yes", CLOSING, "learn-yes", timeout=90,
+                           what="learn yes answers with the draft and its tests")
+        plugin = json.loads((REPO / ".claude-plugin/plugin.json").read_text())["version"]
+        for text in ("Draft sentence for VISION.md, invariant 1:", "  " + SENTENCE,
+                     "Test on the turn you corrected: the check alerts with this sentence added.",
+                     f"Course Keeper {plugin}."):
+            expect(has(view, text), f"learn yes shows {text!r}", text, view)
+        expect(re.search(r"Test on \d+ earlier turns? of this session: no new alert\.", flat(view)),
+               "learn yes reports the scripted earlier-turn results", "no new alert", view)
+        run.wait_store(lambda r: "learn" not in r and r.get("learningSince") is None,
+                       "learn yes drops the draft", save="store-learned")
+        expect(vision_file.read_bytes() == seed, "VISION.md is unchanged", "unchanged", "changed")
+
+        step(f"{next(n)} every model request of the main run got a scripted reply")
+        run.requests(save="model-requests")
+        unscripted(run)
+
+        tight_rows = CARD_ROWS - 1
+        step(f"{next(n)} a short band (maxRows {tight_rows}, below CARD_ROWS {CARD_ROWS}): the "
+             "tree holds the buttons before the sentence")
+        with second_run("--surface", "desktop", "--max-rows", str(tight_rows), *cli,
+                        parent=run, label="short-band-run") as short:
+            tree = alert_turn(short, PROMPT_1, AGENT_1, ALERT_1, "turn-1")
+            order = roles(tree, ALERT_1, HEADLINE_1)
+            expect("sentence" in order and "tell" in order
+                   and order.index("tell") < order.index("sentence"),
+                   f"in a short band (maxRows {tight_rows} < CARD_ROWS {CARD_ROWS}) the buttons "
+                   "come right under the headline, before the sentence",
+                   "tell before sentence", json.dumps(order))
+            card_closed_parts(tree, ALERT_1, HEADLINE_1, tight=True)
+            props = render_props(short)
+            expect(props and props["maxRows"] == tight_rows,
+                   f"the host rendered with maxRows {tight_rows}", tight_rows, json.dumps(props))
+            short.screen(visible=True, save="card-short-band-text")
+            unscripted(short)
+
+        step(f"{next(n)} with CLAUDE_CODE_NOTIFICATIONS_HOST=1 at bodyColumns 1 (the app's first "
+             "measure): the CLI sends one ui_notify frame and the tree holds every Button")
+        with second_run("--surface", "desktop", "--notifications-host", "--columns", "1", *cli,
+                        parent=run, label="notify-run") as other:
+            tree = alert_turn(other, PROMPT_1, AGENT_1, ALERT_1, "turn-1")
+            notes = poll(lambda: other.messages("ui_notify"), bool,
+                         "with CLAUDE_CODE_NOTIFICATIONS_HOST=1 an alert makes the CLI send a "
+                         "ui_notify frame", "one ui_notify frame")
+            other.messages("ui_notify", save="ui-notify")
+            expect(len(notes) == 1 and notes[0].get("title") == TITLE_1
+                   and notes[0].get("text") == ALERT_1["alert"],
+                   "the ui_notify frame holds the title and the alert sentence",
+                   f"title {TITLE_1!r}, text {ALERT_1['alert']!r}", json.dumps(notes))
+            sent = poll(lambda: debug_lines(other, "$.ui.notify (course-keeper)"), bool,
+                        "the CLI's debug log records the notification call", "a line")
+            expect(all(x.endswith("sent by client") for x in sent),
+                   "with the variable set the CLI resolves the call 'sent by client'",
+                   "sent by client", json.dumps(sent))
+            props = render_props(other)
+            expect(props and props["bodyColumns"] == 1 and props["maxRows"] == APP_MAX_ROWS,
+                   "the host rendered with bodyColumns 1 and maxRows 12", "1, 12",
+                   json.dumps(props))
+            card_closed_parts(tree, ALERT_1, HEADLINE_1)
+            drawn = sorted(shown_text(b) for b in buttons(tree) if has_handle(b))
+            want = sorted([CLOSE, "Tell the agent", "Details", "False alarm"])
+            expect(drawn == want, "at bodyColumns 1 the tree holds every Button with a press "
+                   "handle", json.dumps(want, ensure_ascii=False),
+                   json.dumps(drawn, ensure_ascii=False))
+            other.screen(visible=True, save="card-columns-1-text")
+            unscripted(other)
+
+    return desktop
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="journeys/desktop", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--cli", metavar="PATH",
+                        help="the CLI for every run (default: the desktop app's pinned build)")
+    a = parser.parse_args()
+    cli = ("--cli", a.cli) if a.cli else ()
+    print("note: every desktop run here is a stand-in: the harness plays the desktop app's role "
+          "for the app's own Claude Code. A PASS covers the tree and the frames that this CLI "
+          "returns. It does not cover how the desktop app paints the card, its notifications "
+          "or its keyboard handling.", flush=True)
+    journey(make_journey(cli), "--surface", "desktop", "--attach-later", *cli)
+
+
+if __name__ == "__main__":
+    main()

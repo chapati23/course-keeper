@@ -112,7 +112,7 @@ The commands work the same in the terminal and in the desktop app.
 - The plugin API of Claude Code is early access and can change between releases.
 - VS Code has no row above the prompt. There, `/course-keeper` shows the alerts.
 - In the desktop app, a plugin you install on your computer for yourself (user or local scope) does not reach cloud sessions, and no plugin runs in WSL sessions.
-- Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents.
+- Sessions without a person are skipped: `claude -p`, sessions that a program drives through the Agent SDK, sessions that another session drives, and subagents. A prompt that you type in the Code tab of the desktop app counts as a person's.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide. In a test on 2026-11-25, it ran twice on each of 8 turns that had been judged sound and raised no false alert ([details](docs/writing-rules.md#false-alerts)).
 
 ## Turn it off

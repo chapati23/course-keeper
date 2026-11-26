@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Session controls: status, off, on, with the stored switch and an untouched vision.
+
+Only slash commands run, so the session must send no model request at all: the
+request log stays empty.
+"""
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import expect, has, journey, step  # noqa: E402
+
+
+def session(run):
+    vision = Path(run.dir) / "scratch" / "project" / "VISION.md"
+    seed = Path(run.evidence, "vision.md").read_text()
+
+    step("status")
+    view = run.command("", "Last check:", "status-fresh")
+    expect(has(view, f"VISION.md: {vision}"), "status names the fixture vision",
+           f"VISION.md: {vision}", view)
+    expect(has(view, "Checks: on for this session."), "a fresh session has checks on",
+           "Checks: on for this session.", view)
+
+    for state in ("off", "on"):
+        step(state)
+        view = run.command(state, f"Course Keeper checks are {state} for this session.", state)
+        view = run.command("", "Last check:", "status-" + state)
+        expect(has(view, f"Checks: {state} for this session."), f"status after {state}",
+               f"Checks: {state} for this session.", view)
+        record = run.wait_store(lambda r: r["isOff"] is (state == "off"),
+                                f"isOff is {str(state == 'off').lower()}", save="store-" + state)
+        expect(record["isOff"] is (state == "off"), f"stored switch after {state}",
+               state == "off", record["isOff"])
+
+    step("vision unchanged")
+    expect(vision.read_text() == seed, "VISION.md is unchanged", seed, vision.read_text())
+
+    step("no model request")
+    requests = run.requests(save="model-requests")
+    expect(not requests, "slash commands alone cause no model request: the request log is empty",
+           "an empty model-requests.jsonl",
+           json.dumps([(r["seq"], r["method"], r["path"], r.get("model"), r["matched"])
+                       for r in requests]))
+
+
+if __name__ == "__main__":
+    journey(session)

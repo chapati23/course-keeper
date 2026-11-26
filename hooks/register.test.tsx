@@ -1373,7 +1373,7 @@ test('learn drafts a sentence, shows the act, and tests it on excerpts of the se
       `  ${SENTENCE}`,
       '',
       'Test on the turn you corrected: the check alerts with this sentence added.',
-      'Test on 1 earlier turn of this session: 1 new alert: "I will keep prices in the service.". Read it: such an alert can be sound.',
+      'Test on 1 earlier turn of this session: 1 new alert: "I will keep prices in the service." Read it: such an alert can be sound.',
       'Must stay allowed: Showing a price that the service sent.',
       '',
       'Where it comes from: the agent\'s words "I will add a fallback price table in the client."; drafted 2023-11-14 UTC by session-model; Course Keeper 0.1.0.',
@@ -1465,7 +1465,7 @@ test('learn yes stops when the check already alerts on the turn with today\'s vi
   const answer = await command($, 'learn yes')
   expect(answer).toBe(
     "The check already alerts on the turn you corrected with today's vision (invariant 1): " +
-      'The session keeps prices outside the service. Evidence: "I will add a fallback price table in the client.". ' +
+      'The session keeps prices outside the service. Evidence: "I will add a fallback price table in the client." ' +
       'If this alert is about the act you corrected, the vision already covers the act, so no sentence is offered. ' +
       'If the alert is about another matter, run /course-keeper learn <the act in words> again. The draft is dropped.',
   )
@@ -2037,7 +2037,7 @@ test('a control alert on another matter of the turn does not stop the test', asy
   let report = await command($, 'learn yes')
   expect(report).toContain(
     'With today\'s vision the check alerts on this turn on instruction "keep the client small", ' +
-      'another matter: "The session keeps prices outside the service.".\n' +
+      'another matter: "The session keeps prices outside the service."\n' +
       'Test on the turn you corrected: the check alerts on invariant 2, not on invariant 1,',
   )
   // Control, verify, and the earlier turn with the sentence.

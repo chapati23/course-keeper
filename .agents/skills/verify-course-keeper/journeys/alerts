@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Deviation alerts with scripted model replies: the automatic check, Details,
+Tell the agent, False alarm, Dismiss and the manual check.
+
+The scripted check replies prove how the plugin handles a reply. They do not
+prove that a real model detects a deviation.
+"""
+import json
+from pathlib import Path
+import re
+import sys
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import (MARKERS, ask, deviation, expect, final, flat, has, is_check,  # noqa: E402
+                 is_main, journey, note_text, section, step, unscripted)
+
+ALERTS_HEADING = "## Alerts the person has already received in this session"
+HOW_HEADING = "# How to check"
+INTENDED = "false alarm (the person says this is no deviation, or wanted it)"
+INVARIANT_1 = "1. **One module computes every amount.** No other code rounds money."
+
+PROMPT_1 = "Fix the rounding bug in the invoice exporter."
+AGENT_1 = "I will round the invoice totals in the exporter. That is a one-line fix."
+ALERT_1 = {
+    "reference": "invariant 1",
+    "alert": "The agent plans to round invoice totals inside the exporter, but the vision says "
+             "one module computes every amount.",
+    "instead": "Round money only in the one module that computes every amount.",
+    "evidence": "I will round the invoice totals in the exporter.",
+    "note": "The agent plans to round invoice totals in the exporter. Invariant 1 says that one "
+            "module computes every amount and that no other code rounds money. Move the "
+            "rounding into that module instead.",
+}
+AGENT_NOTE = "Understood. I will move the rounding into the module that computes every amount."
+
+PROMPT_2 = "Add a total line to the invoice exporter."
+AGENT_2 = "I will round the total line in the exporter before it writes the file."
+ALERT_2 = {
+    "reference": "invariant 1",
+    "alert": "The agent plans to round the total line in the exporter, but the vision says no "
+             "code outside the one amount module rounds money.",
+    "instead": "Let the one amount module compute and round the total line.",
+    "evidence": AGENT_2,
+    "note": "The agent plans to round the total line in the exporter. Invariant 1 says that one "
+            "module computes every amount. Compute the total line in that module.",
+}
+
+PROMPT_3 = "Write the invoice files to the out folder."
+AGENT_3 = "The exporter now writes the invoice files to the out folder."
+
+PROMPT_4 = "Export the invoices as PDF files."
+# Markdown marks in the agent's words: the transcript and the row show them without the marks
+# (plainQuote in hooks/logic.ts); the check's evidence and the store keep them.
+AGENT_4 = "I will round each line amount in the **PDF writer** with `round_half_up`."
+AGENT_4_SHOWN = "I will round each line amount in the PDF writer with round_half_up."
+ALERT_4 = {
+    "reference": "invariant 1",
+    "alert": "The agent plans to round each line amount in the PDF writer, but the vision says "
+             "one module computes every amount.",
+    "instead": "Take each rounded line amount from the one amount module.",
+    "evidence": AGENT_4,
+    "note": "The agent plans to round line amounts in the PDF writer. Invariant 1 says that one "
+            "module computes every amount. Take the amounts from that module.",
+}
+
+PROMPT_5 = "Deliver the invoices to the clients."
+AGENT_5 = "I will email each invoice to its client from the tool."
+ALERT_5 = {
+    "reference": "invariant 2",
+    "alert": "The agent plans to email each invoice to its client from the tool, but the vision "
+             "says the tool never sends an invoice.",
+    "instead": "Write the invoice files and let the person send them.",
+    "evidence": AGENT_5,
+    "note": "The agent plans to email invoices from the tool. Invariant 2 says that the tool "
+            "never sends an invoice. Write the files and let the person send them.",
+}
+
+
+def quoted(words):
+    """The row's part with the agent's words (register.tsx, terminal branch)."""
+    return f"Agent wrote: \u201c{words}\u201d"
+
+
+def row_shows(run, a, label, title, shown=None):
+    """The row above the prompt shows alert a with its title, sentence, instead and quote.
+    shown is the quote as the row draws it (default: the evidence as the check gave it)."""
+    number = a["reference"].split()[1]
+    run.wait("What your agent did: " + a["alert"], timeout=45, visible=True, save=label)
+    view = run.screen(visible=True)
+    expect("For the agent:" not in view, "the note is hidden at first", "no 'For the agent:'", view)
+    if shown is not None:
+        expect(has(view, quoted(shown)),
+               "the row quotes the agent's words without Markdown marks (plainQuote)",
+               quoted(shown), view)
+    for text in (f"Session breaks invariant {number} · Course Keeper",
+                 f"Your rule: \u201c{title}\u201d",
+                 "What your agent did: " + a["alert"],
+                 "What it should do instead: " + a["instead"],
+                 quoted(shown or a["evidence"]),
+                 "1: Tell the agent", "2: Details", "3: False alarm",
+                 "4: Dismiss \u00b7 ctrl+x tab"):
+        expect(has(view, text), f"row text {text!r}", text, view)
+    return view
+
+
+def focus_row(run, label):
+    """ctrl+x then Tab gives the row the keyboard: a button turns inverse (the first one on a
+    fresh row; the one pressed last when the row already had the keyboard)."""
+    return run.focus(save=label)
+
+
+def row_gone(run, a, label):
+    run.wait("What your agent did: " + a["alert"], gone=True, visible=True, timeout=15,
+             save=label)
+
+
+def answered(record, a, kind):
+    return any(x["evidence"] == a["evidence"] and x["answer"] == kind for x in record["alerts"])
+
+
+def alerts(run):
+    vision = Path(run.evidence, "vision.md").read_text()
+    run.reply(MARKERS["extract"], "none", model="haiku")
+    run.reply(PROMPT_1, AGENT_1, times=1)
+    run.reply(final(AGENT_1), deviation(**ALERT_1), times=1)
+
+    step("1 automatic check")
+    mark = run.last_seq()
+    started = time.time() * 1000
+    ask(run, PROMPT_1, AGENT_1, "turn-1")
+    # Before the row wait: a regression in either promise below draws no row, and the row
+    # wait would only time out.
+    run.wait_store(lambda r: r.get("hasPerson") is True,
+                   "a prompt typed at the terminal prompt counts as a person's (hasPerson)",
+                   timeout=10, save="store-1-person")
+    record = run.wait_store(lambda r: ((r.get("lastCheck") or {}).get("at", 0) >= started
+                                       and r.get("checkingSince") is None),
+                            "the turn's check recorded an outcome", timeout=45,
+                            save="store-1-outcome")
+    outcome = record["lastCheck"]["outcome"]
+    expect(outcome == "verdict: deviation (invariant 1)" and not outcome.startswith("did not run"),
+           "the turn's check ran with the attached terminal and ended with a deviation",
+           "verdict: deviation (invariant 1)", outcome)
+    row_shows(run, ALERT_1, "row-1", "One module computes every amount")
+    check = run.wait_request(lambda r: r["seq"] > mark and is_check(r), "the check fork")
+    main = run.wait_request(lambda r: r["seq"] > mark and is_main(r), "the main turn")
+    expect(main["stream"] and check["stream"] and check["model"] == main["model"],
+           "the fork streams on the session's model", f"stream on {main['model']}",
+           f"main stream={main['stream']}, fork stream={check['stream']} model={check['model']}")
+    held = check["last_user"]
+    expect(INVARIANT_1 in section(held, "## The project's vision", "## The person's"),
+           "the fork carries the vision's invariant", INVARIANT_1, held[:3000])
+    expect(final(AGENT_1) in held, "the fork carries the agent's final answer", final(AGENT_1),
+           held[:3000])
+    expect(MARKERS["check-head"] in held, "the fork carries the check prompt",
+           MARKERS["check-head"], held[:3000])
+    record = run.wait_store(lambda r: (r["current"] or {}).get("evidence") == ALERT_1["evidence"],
+                            "the current alert is alert 1", save="store-1")
+    expect(record["current"]["answer"] is None and
+           record["lastCheck"]["outcome"] == "verdict: deviation (invariant 1)",
+           "store holds the open alert and the check outcome",
+           "answer null, outcome 'verdict: deviation (invariant 1)'", json.dumps(record))
+    view = run.command("", "Last check:", "status-1")
+    listed = (f"1. invariant 1: {ALERT_1['alert']} Instead: {ALERT_1['instead'].rstrip('.')}. "
+              "Answer: none yet.")
+    expect(has(view, listed), "status lists the alert", listed, view)
+    expect(re.search(r"Last check: \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC, verdict: deviation "
+                     r"\(invariant 1\)\.", flat(view)), "status shows the last check",
+           "Last check: <time> UTC, verdict: deviation (invariant 1).", view)
+
+    step("2 details")
+    first = focus_row(run, "focus-2")
+    expect(first == "1: Tell the agent",
+           "on a fresh row Tell the agent has the focus first, so Enter presses it",
+           "1: Tell the agent", first)
+    run.keys("2")
+    run.wait("For the agent: " + ALERT_1["note"], visible=True, timeout=10, save="details-shown")
+    record = run.wait_store(lambda r: r["showDetails"] is True, "showDetails true",
+                            save="store-details-shown")
+    run.keys("2")
+    run.wait("For the agent:", gone=True, visible=True, timeout=10, save="details-hidden")
+    run.wait_store(lambda r: r["showDetails"] is False, "showDetails false",
+                   save="store-details-hidden")
+    run.wait(quoted(ALERT_1["evidence"]), visible=True, timeout=5)
+
+    step("3 tell the agent")
+    run.reply(note_text(ALERT_1), AGENT_NOTE, times=1)
+    run.reply(final(AGENT_NOTE), "verdict: none", times=1)
+    mark = run.last_seq()
+    focus_row(run, "focus-3")
+    run.keys("1")
+    row_gone(run, ALERT_1, "told-row-gone")
+    run.wait_store(lambda r: answered(r, ALERT_1, "told the agent") and r["current"] is None,
+                   "alert 1 answered 'told the agent'", save="store-told")
+    sent = run.wait_request(lambda r: r["seq"] > mark and is_main(r),
+                            "the next main-thread request")
+    expect(note_text(ALERT_1) in sent["last_user"], "the next main request carries the note",
+           note_text(ALERT_1), sent["last_user"])
+    framed = "The course-keeper plugin sent a message: " + note_text(ALERT_1)
+    expect(framed in flat(sent["last_user"]), "the note comes as a message from the plugin",
+           framed, sent["last_user"])
+    run.wait("⏺ " + AGENT_NOTE, timeout=30, save="told-reply")
+    run.wait("Prompt from the course-keeper plugin", timeout=5)
+    run.wait_store(lambda r: r["lastCheck"]["outcome"] == "verdict: none", "the next check ran",
+                   timeout=30)
+    noted = [r["seq"] for r in run.requests() if r["seq"] > mark and "haiku" in (r["model"] or "")]
+    expect(not noted, "the plugin's note starts no standing-instruction call", "none",
+           json.dumps(noted))
+
+    step("4 false alarm")
+    run.reply(PROMPT_2, AGENT_2, times=1)
+    run.reply(final(AGENT_2), deviation(**ALERT_2), times=1)
+    ask(run, PROMPT_2, AGENT_2, "turn-2")
+    row_shows(run, ALERT_2, "row-2", "One module computes every amount")
+    focus_row(run, "focus-4")
+    run.keys("3")
+    run.wait("3: Confirm false alarm", visible=True, timeout=10, save="false-alarm-confirm")
+    run.wait_store(lambda r: r.get("confirmFalseAlarm") is True, "confirmFalseAlarm true",
+                   save="store-confirm")
+    view = run.screen(visible=True)
+    expect(has(view, quoted(ALERT_2["evidence"])), "the row stays after one press",
+           "the row with alert 2", view)
+    run.keys("3")
+    row_gone(run, ALERT_2, "false-alarm-closed")
+    run.wait_store(lambda r: answered(r, ALERT_2, "intended") and r["current"] is None,
+                   "alert 2 answered 'intended'", save="store-intended")
+    run.reply(PROMPT_3, AGENT_3, times=1)
+    run.reply(final(AGENT_3), "verdict: none", times=1)
+    mark = run.last_seq()
+    ask(run, PROMPT_3, AGENT_3, "turn-3")
+    check = run.wait_request(lambda r: r["seq"] > mark and is_check(r), "the next check")
+    told = section(check["last_user"], ALERTS_HEADING, HOW_HEADING)
+    for line in (f'1. invariant 1: {ALERT_1["alert"]} Evidence: "{ALERT_1["evidence"]}". '
+                 "The person's answer: told the agent.",
+                 f'2. invariant 1: {ALERT_2["alert"]} Evidence: "{ALERT_2["evidence"]}". '
+                 f"The person's answer: {INTENDED}."):
+        expect(line in told, "the next check lists the answered alert", line, told)
+    run.wait_store(lambda r: r["lastCheck"]["outcome"] == "verdict: none",
+                   "the check after the false alarm ran", timeout=30)
+    view = run.screen(visible=True)
+    expect("· Course Keeper" not in view, "no row after a 'none' verdict", "no row", view)
+
+    step("5 dismiss; the row quotes the agent's words without Markdown marks")
+    run.reply(PROMPT_4, AGENT_4, times=1)
+    run.reply(final(AGENT_4), deviation(**ALERT_4), times=1)
+    ask(run, PROMPT_4, AGENT_4_SHOWN, "turn-4")
+    row_shows(run, ALERT_4, "row-4", "One module computes every amount", shown=AGENT_4_SHOWN)
+    run.wait_store(lambda r: (r["current"] or {}).get("evidence") == AGENT_4,
+                            "the store keeps the evidence with its Markdown marks, as the "
+                            "check gave it", save="store-4")
+    focus_row(run, "focus-5")
+    run.keys("4")
+    row_gone(run, ALERT_4, "dismissed-row-gone")
+    run.wait_store(lambda r: answered(r, ALERT_4, "dismissed") and r["current"] is None,
+                   "alert 4 answered 'dismissed'", save="store-dismissed")
+
+    step("6 manual check")
+    run.command("off", "Course Keeper checks are off for this session.", "off")
+    run.reply(PROMPT_5, AGENT_5, times=1)
+    mark = run.last_seq()
+    ask(run, PROMPT_5, AGENT_5, "turn-5")
+    run.wait_store(lambda r: r["lastCheck"]["outcome"] == "did not run: checks are off",
+                   "the turn's check declined: checks are off", timeout=30, save="store-off")
+    checks = [r["seq"] for r in run.requests() if r["seq"] > mark and is_check(r)]
+    expect(not checks, "no check request while checks are off", "none", json.dumps(checks))
+    view = run.screen(visible=True, save="off-no-row")
+    expect("· Course Keeper" not in view, "no row while checks are off", "no row", view)
+    run.reply(final(AGENT_5), deviation(**ALERT_5), times=1)
+    mark = run.last_seq()
+    view = run.command("check", "Check finished:", "manual-check", timeout=45)
+    expect(has(view, "Check finished: verdict: deviation (invariant 2)."),
+           "the manual check prints its result",
+           "Check finished: verdict: deviation (invariant 2).", view)
+    row_shows(run, ALERT_5, "row-5", "The tool never sends an invoice")
+    check = run.wait_request(lambda r: r["seq"] > mark and is_check(r), "the manual check fork")
+    expect(final(AGENT_5) in check["last_user"], "the manual check carries the last answer",
+           final(AGENT_5), check["last_user"][:2000])
+    run.wait_store(lambda r: (r["current"] or {}).get("reference") == "invariant 2"
+                   and r["isOff"] is True, "alert 5 is current while checks stay off",
+                   save="store-manual")
+
+    step("evidence")
+    run.requests(save="model-requests")
+    run.screen(save="final-screen")
+    unscripted(run)
+    expect(Path(run.dir, "scratch/project/VISION.md").read_text() == vision,
+           "VISION.md is unchanged", vision, "changed")
+
+
+if __name__ == "__main__":
+    journey(alerts)
