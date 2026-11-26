@@ -1138,6 +1138,36 @@ describe('turns and excerpts', () => {
     expect(text).toContain("## The agent's latest turn\n\nINPUT: Add the checkout.\n\nAGENT: I will add a price table in the client.")
   })
 
+  test('a person message after leading system-reminder blocks counts, without the blocks', () => {
+    const reminder = '<system-reminder>\nThe app moved this session to another folder.\n</system-reminder>\n\n'
+    const reminded: SessionMessage[] = [
+      row('user', 'Name the invoice files.'),
+      row('assistant', 'Each file now carries its number.'),
+      row('user', '<command-name>/course-keeper</command-name><command-args>check</command-args>'),
+      row('user', `${reminder}Show the totals per client.`),
+      row('assistant', 'The exporter now shows the totals per client.'),
+      row('user', `${reminder}${reminder}`),
+      row('user', `${reminder}<task-notification>done</task-notification>`),
+    ]
+    expect(reminded.map((r, k) => isPersonMessage(r, reminded[k - 1]))).toEqual([
+      true, false, false, true, false, false, false,
+    ])
+    expect(turnsOf(reminded)).toEqual([
+      { start: 0, end: 1 },
+      { start: 3, end: 4 },
+    ])
+    expect(personCountAt(reminded, 3)).toBe(2)
+    const text = sessionExcerpt(reminded, { start: 3, end: 4 })
+    expect(text).toContain(
+      '## Messages the person sent, oldest first\n\nName the invoice files.\n\nShow the totals per client.\n\n##',
+    )
+    const person = text.slice(0, text.indexOf("## The agent's latest turn"))
+    expect(person).not.toContain('system-reminder')
+    expect(person).not.toContain('moved this session')
+    // The turn's rows stay as the agent saw them.
+    expect(text).toContain(`## The agent's latest turn\n\nINPUT: ${reminder}Show the totals per client.`)
+  })
+
   test('a user row right after tool results is inside the agent\'s turn, not a person message', () => {
     const skill: SessionMessage[] = [
       row('user', 'Plan the export.'),

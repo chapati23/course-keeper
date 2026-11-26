@@ -38,7 +38,7 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import (MARKERS, JourneyFailure, ask, deviation, expect, final, flat, has,  # noqa: E402
-                 is_check, is_extract, is_main, is_messages, journey, learn_draft,
+                 is_check, is_excerpt, is_extract, is_main, is_messages, journey, learn_draft,
                  message_in, note_text, notice, quoted_sentence, script_turn, second_run,
                  section, step, unscripted)
 
@@ -54,6 +54,8 @@ CLOSE = "✕"
 NO_SURFACE = "did not run: no surface is attached"
 CHECKS_OFF = "did not run: checks are off"
 ALERTS_HEADING = "## Alerts the person has already received in this session"
+PERSON_HEADING = "## Messages the person sent, oldest first"
+LATEST_HEADING = "## The agent's latest turn"
 HOW_HEADING = "# How to check"
 INTENDED = "false alarm (the person says this is no deviation, or wanted it)"
 FRAMED = "The course-keeper plugin sent a message:"
@@ -770,6 +772,7 @@ def make_journey(cli):
         run.reply("AGENT: " + QUOTE, deviation("invariant 1", L_ALERT, L_INSTEAD, QUOTE, L_NOTE),
                   times=1)
         run.reply(MARKERS["excerpt"], "verdict: none")
+        mark = run.last_seq()
         view = run.command("learn yes", CLOSING, "learn-yes", timeout=90,
                            what="learn yes answers with the draft and its tests")
         plugin = json.loads((REPO / ".claude-plugin/plugin.json").read_text())["version"]
@@ -782,6 +785,31 @@ def make_journey(cli):
         run.wait_store(lambda r: "learn" not in r and r.get("learningSince") is None,
                        "learn yes drops the draft", save="store-learned")
         expect(vision_file.read_bytes() == seed, "VISION.md is unchanged", "unchanged", "changed")
+
+        step(f"{next(n)} the excerpt checks of learn yes hold the reminded prompt as the person's "
+             "words, without the reminder, and the reminded turn as a turn of its own")
+        # learn yes has answered, so every excerpt request of it is in the log.
+        excerpts = [r for r in run.requests() if r["seq"] > mark and is_excerpt(r)]
+        Path(run.evidence, "learn-excerpts.json").write_text(json.dumps(excerpts, indent=2))
+        parts = [(section(r["last_user"], PERSON_HEADING, LATEST_HEADING),
+                  section(r["last_user"], LATEST_HEADING, "\x00")) for r in excerpts]
+        expect(parts and all(REMINDER not in person and "system-reminder" not in person
+                             for person, _ in parts),
+               "no excerpt request holds the reminder under the person's messages",
+               "no reminder text", json.dumps([person[-400:] for person, _ in parts]))
+        corrected = [person for person, latest in parts if "AGENT: " + QUOTE in latest]
+        expect(len(corrected) == 2 and all(REMINDED_PROMPT in person for person in corrected),
+               "both excerpt requests of the corrected turn hold the reminded prompt under the "
+               "person's messages", REMINDED_PROMPT, json.dumps([p[-400:] for p in corrected]))
+        reminded = [(person, latest) for person, latest in parts
+                    if "AGENT: " + REMINDED_ANSWER in latest]
+        expect(len(reminded) == 1
+               and reminded[0][0].rstrip().endswith(REMINDED_PROMPT)
+               and reminded[0][1].lstrip().startswith("INPUT: <system-reminder>")
+               and "AGENT: " + AGENT_5 not in reminded[0][1],
+               "the reminded turn is an earlier turn of its own: its person messages end with "
+               "the reminded prompt, and its rows start at that prompt",
+               "one request", json.dumps([(p[-200:], l[:400]) for p, l in reminded]))
 
         step(f"{next(n)} every model request of the main run got a scripted reply")
         run.requests(save="model-requests")
