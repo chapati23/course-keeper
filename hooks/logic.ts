@@ -254,6 +254,22 @@ function escaped(field: string, index: number): boolean {
 }
 
 /**
+ * The index of the last mark in `closers` from `from` on that stands outside
+ * inline code (between backticks), or -1.
+ */
+function lastOutsideCode(field: string, from: number, closers: string): number {
+  let code = false
+  let found = -1
+  for (let i = from; i < field.length; i++) {
+    const mark = field.charAt(i)
+    if (mark === '`') code = !code
+    else if (!code && closers.includes(mark)) found = i
+  }
+
+  return found
+}
+
+/**
  * The quoted text after the start that `start` matches, trimmed. The text
  * ends at the first mark that closes the opening mark, is not escaped with
  * a backslash, and is followed by what AFTER_CLOSE (for single quotes,
@@ -265,10 +281,11 @@ function escaped(field: string, index: number): boolean {
  * starts a quoted word or lone mark (`Reject "." as a name`) opens an inner
  * quotation, and neither it nor the mark that closes that quotation closes
  * the text. A single quote after an `s` and before spaces and a backtick is
- * a possessive before inline code (see POSSESSIVE_CODE). Without such a
- * closing mark the text runs to the last closing mark; without any, there
- * is no text. No look ahead or back from a mark passes another quote mark,
- * so the scan takes linear time.
+ * a possessive before inline code (see POSSESSIVE_CODE) when a closing mark
+ * outside code follows that code. Without such a closing mark the text runs
+ * to the last closing mark; without any, there is no text. Each look ahead
+ * from a mark stops at the next quote mark or backtick, and the marks
+ * outside code are counted once, so the scan takes linear time.
  */
 function quotedText(field: string, start: RegExp): string | undefined {
   const match = start.exec(field)
@@ -282,6 +299,7 @@ function quotedText(field: string, start: RegExp): string | undefined {
   let depth = 0
   let nonSpace = false
   let inner = -1
+  let lastOutside: number | undefined
 
   for (let i = from; i < field.length; i++) {
     const mark = field.charAt(i)
@@ -303,8 +321,14 @@ function quotedText(field: string, start: RegExp): string | undefined {
       const inside = i === inner || (open === '"' ? depth % 2 === 1 : depth > 0)
       after.lastIndex = i + 1
       POSSESSIVE_CODE.lastIndex = i + 1
-      const possessive =
-        after === AFTER_SINGLE_CLOSE && /s/i.test(field.charAt(i - 1)) && POSSESSIVE_CODE.test(field)
+      let possessive = false
+      if (after === AFTER_SINGLE_CLOSE && /s/i.test(field.charAt(i - 1)) && POSSESSIVE_CODE.test(field)) {
+        // Only when a closing mark outside code follows the code span: else
+        // the code is a remark after the text (`'Keep backups' \`mode = 'daily'\``).
+        const end = field.indexOf('`', POSSESSIVE_CODE.lastIndex)
+        lastOutside ??= lastOutsideCode(field, from, closers)
+        possessive = end !== -1 && lastOutside > end
+      }
       if (!inside && !possessive && after.test(field)) return field.slice(from, i).trim()
     }
     if (open === '"') depth++

@@ -246,6 +246,8 @@ describe('the check reply', () => {
       ['instruction "Keep backups ".', 'instruction "Keep backups"'],
       ["instruction 'Keep IDs stable' *see 'Data Rules'*", 'instruction "Keep IDs stable"'],
       ["instruction 'Keep IDs stable' `field = 'id'`", 'instruction "Keep IDs stable"'],
+      ["instruction 'Keep backups' `mode = 'daily'`", 'instruction "Keep backups"'],
+      ["instruction 'Use the users' `id` field' `see 'ids'`", "instruction \"Use the users' `id` field\""],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
