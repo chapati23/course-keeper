@@ -10,9 +10,9 @@ card's parts in the tree that the CLI returns for ui_render at the app's maxRows
 button through ui_press (Details, Tell the agent, False alarm, the close Button), the
 notification call without CLAUDE_CODE_NOTIFICATIONS_HOST, the ui_toast frame for a new
 standing instruction, an instruction alert's headline, off, check and on, a short learn,
-and it records what the plugin's haiku call holds when the frame carries a leading
-system-reminder block. A fresh run without the doctor proves that a frame without
-client_platform is no person and that the app's envelope is one. A run with --max-rows
+and that the plugin's haiku call holds the person's words without the reminder when the
+frame carries a leading system-reminder block. A fresh run without the doctor proves that
+a frame without client_platform is no person and that the app's envelope is one. A run with --max-rows
 below CARD_ROWS proves the short-band order. A run with --notifications-host and
 --columns 1 proves the ui_notify frame and the card's Buttons at the app's first measure.
 
@@ -726,8 +726,7 @@ def make_journey(cli):
                     what="on answers that checks are on")
         run.wait_store(lambda r: r["isOff"] is False, "on stores isOff false", save="store-on")
 
-        step(f"{next(n)} a leading system-reminder block reaches the haiku call (recorded "
-             "behaviour, not a promise)")
+        step(f"{next(n)} a leading system-reminder block does not reach the haiku call")
         script_turn(run, REMINDED_PROMPT, REMINDED_ANSWER, haiku="none", check="verdict: none")
         mark = run.last_seq()
         started = time.time() * 1000
@@ -738,13 +737,14 @@ def make_journey(cli):
                                    and REMINDED_PROMPT in r["last_user"],
                                    "the reminded prompt starts the haiku call")
         Path(run.evidence, "reminder-extract.json").write_text(json.dumps(extract, indent=2))
-        held = message_in(extract) or ""
-        holds = REMINDER in held and "<system-reminder>" in held
+        held = message_in(extract)
+        expect(REMINDER not in extract["last_user"] and "<system-reminder>" not in extract["last_user"],
+               "the haiku call does not hold the system-reminder block", "no reminder text",
+               json.dumps((held or extract["last_user"])[:300]))
+        expect(held is not None and held.strip() == REMINDED_PROMPT,
+               "the haiku call's <message> holds the person's words", REMINDED_PROMPT,
+               json.dumps(held))
         run.wait_store(ended_after(started), "the reminded turn's check ended")
-        print("recorded behaviour: the haiku call's <message> "
-              f"{'holds' if holds else 'does not hold'} the system-reminder block: "
-              f"{json.dumps(held[:300])}", flush=True)
-        # Recorded only: the step never fails on what the haiku call holds.
 
         step(f"{next(n)} learn, short")
         for i, (prompt, answer) in enumerate((L_FAIL, L_FIX)):
