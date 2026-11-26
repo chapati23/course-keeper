@@ -1,10 +1,10 @@
 <!--
 The check prompt. The plugin appends it as one user message to a copy of the session
 (a fork), with the three {{...}} fields filled in. The copy has no tools and gives one reply.
-Measured in November 2026 on recorded failing turns of one private project: the check raised an
-alert in 3 of 3 tries on each of four turns, on the expected invariant. False alerts on sound turns
-were last measured before the `instead` field was added; they are not measured for this text.
-The `invariant "<…>"` reference for a vision without numbered invariants (0.7.0) is not measured.
+Measured on 2026-11-26 (0.7.0) on recorded turns of one private project. On four failing turns
+the check raised an alert on the expected invariant in 3 of 3 tries each, with a numbered vision
+(`invariant <n>`) and with a vision whose invariants are bullets (`invariant "<…>"`). On 8 sound
+turns, 2 tries each, it raised 7 alerts: none false, 5 correct, 2 not judged.
 Change it only together with an eval run (exception for tiny changes: docs/review.md).
 -->
 
