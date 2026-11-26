@@ -11,6 +11,12 @@ Checks a review of this repository applies in addition to the general review ins
 - The exception does not cover a change to the meaning of an instruction, to which fields a prompt holds, to what a field says, or to the reply format that the model must produce. It also does not cover a sentence added or removed. Those changes still need an eval run.
 - The HTML comment at the start of a prompt file does not reach the model: `stripLeadingComments` removes it. A change only to that comment needs no eval run.
 
+## Docs that describe the changed behavior
+
+**Trigger:** a change to `hooks/` or `prompts/` that alters what Course Keeper sends to a model, stores, or shows.
+
+- Search every Markdown file in the repository (at least `docs/reference.md`, `CONTEXT.md`, `README.md`, `docs/writing-rules.md` and `.agents/skills/**`), and the comments of the changed functions, for each sentence that describes the changed behavior. Read each hit against the new code. A sentence that names an exact form (what a model call receives, how quoted words are cleaned, which lines count as items) must state the code's actual rule, including its edge cases. (class: stale-behavior-claim-in-docs)
+
 ## Tests, verification journeys and the harness
 
 **Trigger:** a change to a test file under `hooks/` or to `.agents/skills/verify-course-keeper/`.
