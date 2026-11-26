@@ -411,7 +411,7 @@ describe('the check prompt', () => {
   test("the turn's final answer goes before the check prompt", () => {
     expect(withFinalAnswer('# Check', '  I will add a price table.  ')).toBe(
       'The agent ended its latest turn with the answer below. The conversation ' +
-        'above does not show this answer yet. It is part of the material to examine.\n\n' +
+        'above may already show it. It is part of the material to examine.\n\n' +
         '<final_answer>\nI will add a price table.\n</final_answer>\n\n# Check',
     )
     expect(withFinalAnswer('# Check', ' ')).toBe('# Check')

@@ -132,8 +132,9 @@ export function fillCheckPrompt(
 
 /**
  * Puts the agent's final answer of the turn before the check prompt. A fork
- * sends the main thread's last request again, and that request does not
- * hold the answer the model gave to it.
+ * sends the main thread's last request again. In Claude Code 2.1.332 the
+ * forked copy also holds the answer to that request; 2.1.330 was not
+ * checked. The text says only that the conversation may show it.
  */
 export function withFinalAnswer(prompt: string, answer: string): string {
   const text = answer.trim()
@@ -141,7 +142,7 @@ export function withFinalAnswer(prompt: string, answer: string): string {
 
   return (
     'The agent ended its latest turn with the answer below. The conversation ' +
-    'above does not show this answer yet. It is part of the material to examine.\n\n' +
+    'above may already show it. It is part of the material to examine.\n\n' +
     `<final_answer>\n${text}\n</final_answer>\n\n${prompt}`
   )
 }
