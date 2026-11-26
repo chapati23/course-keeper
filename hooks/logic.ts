@@ -180,7 +180,7 @@ export function formatAlerts(record: CourseKeeperSession): string {
     : all
         .map(
           (a, i) =>
-            `${i + 1}. ${a.reference}: ${a.alert} Evidence: "${a.evidence}". ` +
+            `${i + 1}. ${a.reference}: ${a.alert} Evidence: ${quotedSentence(a.evidence)} ` +
             `The person's answer: ${describeAnswer(a.answer)}.`,
         )
         .join('\n')
@@ -556,7 +556,7 @@ export function compactInstructions(
 export function noteText(alert: CourseKeeperAlert): string {
   return (
     `Course Keeper alert on ${alert.reference}. ` +
-    `Evidence: "${alert.evidence}". Note: ${alert.note}`
+    `Evidence: ${quotedSentence(alert.evidence)} Note: ${alert.note}`
   )
 }
 

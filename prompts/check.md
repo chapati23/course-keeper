@@ -4,7 +4,7 @@ The check prompt. The plugin appends it as one user message to a copy of the ses
 Measured in November 2026 on recorded failing turns of one private project: the check raised an
 alert in 3 of 3 tries on each of four turns, on the expected invariant. False alerts on sound turns
 were last measured before the `instead` field was added; they are not measured for this text.
-Change it only together with an eval run.
+Change it only together with an eval run (exception for tiny changes: docs/review.md).
 -->
 
 <system-reminder>

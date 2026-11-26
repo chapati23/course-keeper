@@ -665,7 +665,7 @@ test('Tell the agent sends the note as the plugin, not as the person', async ($,
   const sent = submitted.at(-1)
   expect(sent?.origin).toBe('plugin')
   expect(sent?.text).toBe(
-    'Course Keeper alert on invariant 1. Evidence: "I will add a fallback price table in the client.". ' +
+    'Course Keeper alert on invariant 1. Evidence: "I will add a fallback price table in the client." ' +
       'Note: Invariant 1 says one service sets every price. Move the table into that service.',
   )
   expect(await ui.find({ type: 'Text', text: /Course Keeper/ })).toBeUndefined()

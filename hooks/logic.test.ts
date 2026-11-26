@@ -78,6 +78,7 @@ import {
   plainQuote,
   quotedSentence,
   retried,
+  noteText,
 } from './logic'
 
 const DEVIATION = [
@@ -324,8 +325,29 @@ describe('the check prompt', () => {
     expect(prompt).toBe(
       '# Check\n\n1. One service sets every price.\n\n1. never post without my yes\n\n' +
         '1. invariant 2: The session adds a second pricing path. Evidence: ' +
-        '"I will add a fallback price table in the client.". ' +
+        '"I will add a fallback price table in the client." ' +
         "The person's answer: false alarm (the person says this is no deviation, or wanted it).\n",
+    )
+  })
+
+  test('the alert list and the note close a quote with a period only when it has no end mark', () => {
+    const ended = alertOf({ note: 'Keep the price in one service.' })
+    const open = alertOf({ evidence: 'a fallback price table', answer: 'told the agent' })
+
+    expect(formatAlerts({ ...emptyRecord(), alerts: [ended, open] })).toBe(
+      '1. invariant 2: The session adds a second pricing path. Evidence: ' +
+        '"I will add a fallback price table in the client." ' +
+        "The person's answer: none yet.\n" +
+        '2. invariant 2: The session adds a second pricing path. Evidence: ' +
+        '"a fallback price table". The person\'s answer: told the agent.',
+    )
+    expect(noteText(ended)).toBe(
+      'Course Keeper alert on invariant 2. Evidence: ' +
+        '"I will add a fallback price table in the client." Note: Keep the price in one service.',
+    )
+    expect(noteText(open)).toBe(
+      'Course Keeper alert on invariant 2. Evidence: "a fallback price table". ' +
+        'Note: Keep the price in one service.',
     )
   })
 
