@@ -234,6 +234,17 @@ const AFTER_CLOSE = /(?:$|[\s.,;:!?)\]}*_`])/y
  * letter or digit, after any spaces.
  */
 const AFTER_SINGLE_CLOSE = /\s*(?:$|[^\p{L}\p{N}\s])/uy
+/**
+ * Spaces and a backtick after a single quote that follows an `s`: a
+ * possessive before inline code in the text (`the users' \`id\` field`),
+ * not a closing mark before a remark in code.
+ */
+const POSSESSIVE_CODE = /\s+`/y
+/**
+ * After a straight mark, a run of marks that are no space up to the same
+ * mark: the rest of a quoted lone mark such as `"."`.
+ */
+const LONE_MARK = { '"': /[^\s"]+"/y, "'": /[^\s']+'/y } as Record<string, RegExp>
 
 /** True when the mark at `index` has an odd run of backslashes before it. */
 function escaped(field: string, index: number): boolean {
@@ -244,6 +255,22 @@ function escaped(field: string, index: number): boolean {
 }
 
 /**
+ * The index of the last mark in `closers` from `from` on that stands outside
+ * inline code (between backticks), or -1.
+ */
+function lastOutsideCode(field: string, from: number, closers: string): number {
+  let code = false
+  let found = -1
+  for (let i = from; i < field.length; i++) {
+    const mark = field.charAt(i)
+    if (mark === '`') code = !code
+    else if (!code && closers.includes(mark)) found = i
+  }
+
+  return found
+}
+
+/**
  * The quoted text after the start that `start` matches, trimmed. The text
  * ends at the first mark that closes the opening mark, is not escaped with
  * a backslash, and is followed by what AFTER_CLOSE (for single quotes,
@@ -251,8 +278,15 @@ function escaped(field: string, index: number): boolean {
  * and a quotation in a remark after it does not join it. A quotation inside
  * the text stays whole: in straight double quotes the text holds an even
  * number of unescaped quote marks, and in curly or French quotes as many
- * inner opening marks as closing ones. Without such a mark the text runs to
- * the last closing mark; without any, there is no text.
+ * inner opening marks as closing ones. A straight mark after a space that
+ * starts a quoted word or lone mark (`Reject "." as a name`) opens an inner
+ * quotation, and neither it nor the mark that closes that quotation closes
+ * the text. A single quote after an `s` and before spaces and a backtick is
+ * a possessive before inline code (see POSSESSIVE_CODE) when a closing mark
+ * outside code follows that code. Without such a closing mark the text runs
+ * to the last closing mark; without any, there is no text. Each look ahead
+ * from a mark stops at the next quote mark or backtick, and the marks
+ * outside code are counted once, so the scan takes linear time.
  */
 function quotedText(field: string, start: RegExp): string | undefined {
   const match = start.exec(field)
@@ -265,6 +299,8 @@ function quotedText(field: string, start: RegExp): string | undefined {
   let last: number | undefined
   let depth = 0
   let nonSpace = false
+  let inner = -1
+  let lastOutside: number | undefined
 
   for (let i = from; i < field.length; i++) {
     const mark = field.charAt(i)
@@ -273,11 +309,28 @@ function quotedText(field: string, start: RegExp): string | undefined {
       nonSpace ||= /\S/.test(mark)
       continue
     }
-    if (nonSpace) {
+    const lone = LONE_MARK[mark]
+    let opens = false
+    if (lone !== undefined && open === mark && /\s/.test(field.charAt(i - 1))) {
+      lone.lastIndex = i + 1
+      opens = lone.test(field)
+      // The mark that closes the inner quotation closes nothing outside it.
+      if (opens) inner = lone.lastIndex - 1
+    }
+    if (nonSpace && !opens) {
       last = i
-      const inside = open === '"' ? depth % 2 === 1 : depth > 0
+      const inside = i === inner || (open === '"' ? depth % 2 === 1 : depth > 0)
       after.lastIndex = i + 1
-      if (!inside && after.test(field)) return field.slice(from, i).trim()
+      POSSESSIVE_CODE.lastIndex = i + 1
+      let possessive = false
+      if (after === AFTER_SINGLE_CLOSE && /s/i.test(field.charAt(i - 1)) && POSSESSIVE_CODE.test(field)) {
+        // Only when a closing mark outside code follows the code span: else
+        // the code is a remark after the text (`'Keep backups' \`mode = 'daily'\``).
+        const end = field.indexOf('`', POSSESSIVE_CODE.lastIndex)
+        lastOutside ??= lastOutsideCode(field, from, closers)
+        possessive = end !== -1 && lastOutside > end
+      }
+      if (!inside && !possessive && after.test(field)) return field.slice(from, i).trim()
     }
     if (open === '"') depth++
     else if (nests && depth > 0) depth--
@@ -397,10 +450,61 @@ function unquote(text: string): string {
   return unescapeQuotes(stripQuotes(text))
 }
 
-function same(a: string, b: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+/**
+ * A text in the form that two texts are compared in: one space for each run
+ * of spaces and no letter case. For words (a reference or an instruction)
+ * the case goes from the NFC text, and the result is in NFD, so an accent
+ * written as its own mark matches the accented letter, and a text cut in
+ * the middle of an accented letter is still the start of the whole text.
+ * toLowerCase, not toLocaleLowerCase, so the result does not depend on the
+ * machine's locale.
+ *
+ * Evidence keeps its Unicode form, as before 0.7.1: it is the model's copy
+ * of the session's text, two file names can differ only in that form, and
+ * a wider match there hides an alert on new evidence. Letter case in
+ * evidence was ignored before 0.7.1 and still is.
+ */
+function compareForm(text: string, form: 'words' | 'evidence'): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
 
-  return norm(a) === norm(b)
+  return form === 'words'
+    ? flat.normalize('NFC').toLowerCase().normalize('NFD')
+    : flat.toLowerCase()
+}
+
+/** True when two texts are equal in compareForm. */
+function same(a: string, b: string, form: 'words' | 'evidence' = 'words'): boolean {
+  return compareForm(a, form) === compareForm(b, form)
+}
+
+/**
+ * The text of a reference that `clean` cut to LIMITS.reference characters,
+ * without its `…`; undefined for a reference that was not cut. A canonical
+ * quoted reference ends with its closing mark, so only a cut one ends with
+ * `…`.
+ */
+function cutReference(reference: string): string | undefined {
+  return reference.endsWith('…') ? reference.slice(0, -1) : undefined
+}
+
+/**
+ * True when two references cite the same rule: equal in compareForm, or,
+ * when the cut to LIMITS.reference characters shortened one of them, the
+ * cut one is the start of the other in compareForm. The cut counts characters of the text as the model wrote
+ * it, so the same words in other letter case or another Unicode form can
+ * be cut at another place.
+ */
+function sameReference(a: string, b: string): boolean {
+  if (same(a, b)) return true
+  const cutA = cutReference(a)
+  const cutB = cutReference(b)
+  if (cutA === undefined && cutB === undefined) return false
+  const textA = compareForm(cutA ?? a, 'words')
+  const textB = compareForm(cutB ?? b, 'words')
+  if (cutA === undefined) return textA.startsWith(textB)
+  if (cutB === undefined) return textB.startsWith(textA)
+
+  return textA.startsWith(textB) || textB.startsWith(textA)
 }
 
 /** True when an alert with this reference and evidence was already shown. */
@@ -414,8 +518,8 @@ export function wasShown(
   // A record from before 0.6.1 can hold evidence with the model's `\"`.
   return all.some(
     a =>
-      same(a.reference, reference) &&
-      same(unescapeQuotes(a.evidence), unescapeQuotes(evidence)),
+      sameReference(a.reference, reference) &&
+      same(unescapeQuotes(a.evidence), unescapeQuotes(evidence), 'evidence'),
   )
 }
 

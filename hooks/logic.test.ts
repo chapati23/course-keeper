@@ -243,6 +243,12 @@ describe('the check reply', () => {
       ],
       ['instruction "never push to main" (the person wrote "main")', 'instruction "never push to main"'],
       ["instruction 'keep users' data private'", `instruction "keep users' data private"`],
+      ["instruction 'Use the users' `id` field'", "instruction \"Use the users' `id` field\""],
+      ['instruction "Keep backups ".', 'instruction "Keep backups"'],
+      ["instruction 'Keep IDs stable' *see 'Data Rules'*", 'instruction "Keep IDs stable"'],
+      ["instruction 'Keep IDs stable' `field = 'id'`", 'instruction "Keep IDs stable"'],
+      ["instruction 'Keep backups' `mode = 'daily'`", 'instruction "Keep backups"'],
+      ["instruction 'Use the users' `id` field' `see 'ids'`", "instruction \"Use the users' `id` field\""],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
@@ -279,6 +285,9 @@ describe('the check reply', () => {
       ['invariant “Treat “off” as disabled.” (the “flags” bullet)', 'invariant "Treat “off” as disabled"'],
       ['invariant "Never select columns with SELECT *."', 'invariant "Never select columns with SELECT *"'],
       [String.raw`invariant "Paths end in \\" (the root)`, String.raw`invariant "Paths end in \\"`],
+      ['invariant "Reject "." as a filename."', 'invariant "Reject "." as a filename"'],
+      ["invariant 'Reject '.' as a filename.'", `invariant "Reject '.' as a filename"`],
+      ["invariant 'Reject '.'; use the full path.'", `invariant "Reject '.'; use the full path"`],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
@@ -300,6 +309,31 @@ describe('the check reply', () => {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       expect([reference, parseCheckReply(reply)]).toEqual([reference, undefined])
     }
+  })
+
+  test('quoted words with 80,000 quote marks are read in linear time', () => {
+    // A scan that looks ahead from each mark to the end of the field takes
+    // billions of steps here.
+    const n = 80000
+    const fields = [
+      `invariant "${'a"'.repeat(n)}`,
+      `invariant "${' "a'.repeat(n)}`,
+      `invariant "${' ".'.repeat(n)}`,
+      `instruction '${"a' ".repeat(n)}`,
+      `instruction '${" 'a".repeat(n)}`,
+      `instruction '${"s' `".repeat(n)}`,
+      `invariant "${'\\"'.repeat(n)}`,
+      `invariant “${'“a'.repeat(n / 2)}${'”a'.repeat(n / 2)}`,
+    ]
+    const started = Date.now()
+    const read = fields.map(field => {
+      const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${field}`))
+      return reply?.verdict === 'deviation' ? reply.reference.slice(0, 20) : reply
+    })
+
+    expect(Date.now() - started).toBeLessThanOrEqual(2000)
+    // The possessive field keeps its words past the first `s' \``.
+    expect(read[5]).toBe("instruction \"s' `s' ")
   })
 
   test('a long quoted instruction is accepted, then cut', () => {
@@ -474,6 +508,76 @@ describe('the duplicate-alert rule', () => {
     )
 
     expect(applyReply(record, reply, 2000).outcome).toBe(`verdict: deviation (${reference}), already shown`)
+  })
+
+  test('quoted words that differ only in letter case or Unicode form are the same reference', () => {
+    // The stored words are in NFC; the reply writes the é as e and a combining accent.
+    for (const [stored, replied] of [
+      ['invariant "Café prices come from one service"', 'invariant "CAFE\u0301 PRICES come from one service."'],
+      ['instruction "Keep the café menu"', 'instruction "keep the cafe\u0301 MENU"'],
+    ] as const) {
+      const record = { ...emptyRecord(), alerts: [alertOf({ reference: stored, answer: 'dismissed' })] }
+      const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${replied}`))
+      const done = applyReply(record, reply, 2000)
+
+      expect([replied, done.outcome]).toEqual([replied, `verdict: deviation (${replied.replace('."', '"')}), already shown`])
+      expect(done.record.alerts.map(a => a.reference)).toEqual([stored])
+    }
+  })
+
+  test('long quoted words that the cut shortens at another place are the same reference', () => {
+    // Each pair is one rule: the reply's form has more characters, so the
+    // cut to LIMITS.reference characters ends its stored text earlier. The
+    // tail has no spaces, so neither cut lands on one.
+    const tail = ` ${'exports'.repeat(35)}`
+    for (const [first, again] of [
+      [`invariant "Café prices${tail}"`, `invariant "cafe\u0301 PRICES${tail}"`],
+      [`instruction "İ${'İ'.repeat(5)} stays${tail}"`, `instruction "i\u0307${'i\u0307'.repeat(5)} stays${tail}"`],
+      [`instruction "${'é'.repeat(195)} x"`, `instruction "${'e\u0301'.repeat(195)} x"`],
+    ] as const) {
+      const stored = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${first}`))
+      const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${again}`))
+      if (stored?.verdict !== 'deviation' || reply?.verdict !== 'deviation') throw new Error('expected deviations')
+      expect([stored.reference.endsWith('…'), reply.reference.endsWith('…')]).toEqual([true, true])
+      expect(stored.reference.normalize('NFC').toLowerCase()).not.toBe(reply.reference.normalize('NFC').toLowerCase())
+
+      for (const [shown, next] of [
+        [stored.reference, reply],
+        [reply.reference, stored],
+      ] as const) {
+        const record = { ...emptyRecord(), alerts: [alertOf({ reference: shown, answer: 'dismissed' })] }
+        expect([shown, applyReply(record, next, 2000).shown]).toEqual([shown, undefined])
+      }
+    }
+  })
+
+  test('long quoted words that differ before the cut are a new reference', () => {
+    const tail = ' in every export'.repeat(15)
+    const stored = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: invariant "Café prices${tail}"`))
+    const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: invariant "Café taxes${tail}"`))
+    if (stored?.verdict !== 'deviation') throw new Error('expected a deviation')
+    const record = { ...emptyRecord(), alerts: [alertOf({ reference: stored.reference, answer: 'dismissed' })] }
+
+    expect(applyReply(record, reply, 2000).shown?.reference).toMatch(/^invariant "Café taxes/)
+  })
+
+  test('long quoted words that differ in the last character before the cut are a new reference', () => {
+    // `invariant "` and 187 characters, so A or B is the last character the cut keeps.
+    const words = (last: string) => `invariant "${'w'.repeat(187)}${last}${' and more'.repeat(5)}"`
+    const stored = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${words('A')}`))
+    const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${words('B')}`))
+    if (stored?.verdict !== 'deviation') throw new Error('expected a deviation')
+    expect(stored.reference.endsWith('A…')).toBe(true)
+    const record = { ...emptyRecord(), alerts: [alertOf({ reference: stored.reference, answer: 'dismissed' })] }
+
+    expect(applyReply(record, reply, 2000).shown?.reference.endsWith('B…')).toBe(true)
+  })
+
+  test('evidence that differs only in Unicode form is new evidence', () => {
+    const record = { ...emptyRecord(), alerts: [alertOf({ evidence: 'rm café.txt', answer: 'dismissed' })] }
+    const reply = parseCheckReply(DEVIATION.replace('evidence: "I will add a fallback price table in the client."', 'evidence: "rm cafe\u0301.txt"'))
+
+    expect(applyReply(record, reply, 2000).shown?.evidence).toBe('rm cafe\u0301.txt')
   })
 
   test('the current alert counts as shown', () => {
@@ -696,6 +800,19 @@ describe('the standing instructions', () => {
 
     expect(done.added).toEqual(['Ask before deleting files'])
     expect(done.list).toHaveLength(2)
+  })
+
+  test('an instruction in another Unicode form is equal and keeps its stored form', () => {
+    const done = addInstructions(['Keep the café menu'], ['keep the cafe\u0301 MENU'])
+
+    expect(done).toEqual({ list: ['Keep the café menu'], added: [] })
+    expect(addWithdrawn(['Keep the café menu'], 'keep the cafe\u0301 MENU')).toEqual(['keep the cafe\u0301 MENU'])
+  })
+
+  test('an instruction in other letter case is equal also when lowercase changes its Unicode form', () => {
+    // Lowercase j with a caron has a composed form that capital J lacks.
+    const caron = String.fromCodePoint(0x30c)
+    expect(addInstructions([`J${caron} stays`], [`j${caron} stays`]).added).toEqual([])
   })
 
   test('at most 30 are kept', () => {
