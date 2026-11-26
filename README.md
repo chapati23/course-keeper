@@ -23,7 +23,7 @@ You need Claude Code 2.1.323 or later. Check with `claude --version` in a shell,
 
    **In the terminal**, at the prompt of a Claude Code session:
 
-   ```
+   ```text
    /plugin install course-keeper --marketplace chapati23/course-keeper
    ```
 

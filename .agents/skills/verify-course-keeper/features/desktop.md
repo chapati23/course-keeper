@@ -38,7 +38,7 @@ The whole recipe runs as `journeys/desktop` (about 25 seconds, four runs). The s
 - **Send.** Run `control send "$RUN" "Fix the rounding bug in the invoice exporter."`, then `control wait "$RUN" "[ Tell the agent ]" --row --timeout 45`.
 - **Read the card.** Run `control screen "$RUN" --row`. It prints the tree as text, one element per line:
 
-  ```
+  ```text
     ⟨svg: Course Keeper⟩
     Breaks rule: “One module computes every amount”
     [ ✕ ]  ⟨role dismiss⟩
