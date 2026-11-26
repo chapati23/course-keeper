@@ -39,8 +39,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import (MARKERS, JourneyFailure, ask, deviation, expect, final, flat, has,  # noqa: E402
                  is_check, is_extract, is_main, is_messages, journey, learn_draft,
-                 message_in, note_text, notice, script_turn, second_run, section, step,
-                 unscripted)
+                 message_in, note_text, notice, quoted_sentence, script_turn, second_run,
+                 section, step, unscripted)
 
 REPO = Path(__file__).resolve().parents[4]
 # hooks/register.tsx: `const CARD_ROWS = 10`, "The rows the card takes in the band with its
@@ -631,7 +631,7 @@ def make_journey(cli):
         mark, _ = person_turn(run, PROMPT_3, AGENT_3, "turn-3")
         check = next(r for r in run.requests() if r["seq"] > mark and is_check(r))
         told = section(check["last_user"], ALERTS_HEADING, HOW_HEADING)
-        line = (f'2. invariant 1: {ALERT_2["alert"]} Evidence: "{ALERT_2["evidence"]}". '
+        line = (f'2. invariant 1: {ALERT_2["alert"]} Evidence: {quoted_sentence(ALERT_2["evidence"])} '
                 f"The person's answer: {INTENDED}.")
         expect(line in told, "the next check hears the false alarm", line, told)
 

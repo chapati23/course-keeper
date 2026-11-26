@@ -107,9 +107,16 @@ def deviation(reference, alert, instead, evidence, note):
             f"instead: {instead}\nevidence: \"{evidence}\"\nnote: {note}")
 
 
+def quoted_sentence(text):
+    """quotedSentence in hooks/logic.ts: the text in quotation marks, then a period unless
+    the text already ends with . ? or ! (closing quotes or brackets after that mark count)."""
+    return f'"{text}"' if re.search(r"[.?!][\"'”’)\]]*$", text) else f'"{text}".'
+
+
 def note_text(a):
     """noteText in hooks/logic.ts: the note that "Tell the agent" sends for alert a."""
-    return f"Course Keeper alert on {a['reference']}. Evidence: \"{a['evidence']}\". Note: {a['note']}"
+    return (f"Course Keeper alert on {a['reference']}. "
+            f"Evidence: {quoted_sentence(a['evidence'])} Note: {a['note']}")
 
 
 def notice(*added):

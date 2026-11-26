@@ -2,7 +2,8 @@
 The learn prompt. The plugin appends it as one user message to a copy of the session (a fork),
 with the two {{...}} fields filled in, when the person runs /course-keeper learn. The plugin removes
 this comment before it sends the prompt.
-Version v1, measured on 2026-11-23 on 8 recorded catches. Change it only together with an eval run.
+Version v1, measured on 2026-11-23 on 8 recorded catches. Change it only together with an eval run
+(exception for tiny changes: docs/review.md).
 -->
 
 <system-reminder>

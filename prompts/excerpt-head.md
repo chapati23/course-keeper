@@ -1,7 +1,8 @@
 <!--
 The head of an excerpt check. /course-keeper learn puts it in place of the leading <system-reminder>
 block of check.md and sends the result, with session excerpts after it, to the session's model in a
-separate call. Measured together with learn v1. Change it only together with an eval run.
+separate call. Measured together with learn v1. Change it only together with an eval run
+(exception for tiny changes: docs/review.md).
 -->
 
 <system-reminder>

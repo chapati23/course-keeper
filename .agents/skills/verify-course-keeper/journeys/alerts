@@ -14,7 +14,7 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import (MARKERS, ask, deviation, expect, final, flat, has, is_check,  # noqa: E402
-                 is_main, journey, note_text, section, step, unscripted)
+                 is_main, journey, note_text, quoted_sentence, section, step, unscripted)
 
 ALERTS_HEADING = "## Alerts the person has already received in this session"
 HOW_HEADING = "# How to check"
@@ -232,9 +232,9 @@ def alerts(run):
     ask(run, PROMPT_3, AGENT_3, "turn-3")
     check = run.wait_request(lambda r: r["seq"] > mark and is_check(r), "the next check")
     told = section(check["last_user"], ALERTS_HEADING, HOW_HEADING)
-    for line in (f'1. invariant 1: {ALERT_1["alert"]} Evidence: "{ALERT_1["evidence"]}". '
+    for line in (f'1. invariant 1: {ALERT_1["alert"]} Evidence: {quoted_sentence(ALERT_1["evidence"])} '
                  "The person's answer: told the agent.",
-                 f'2. invariant 1: {ALERT_2["alert"]} Evidence: "{ALERT_2["evidence"]}". '
+                 f'2. invariant 1: {ALERT_2["alert"]} Evidence: {quoted_sentence(ALERT_2["evidence"])} '
                  f"The person's answer: {INTENDED}."):
         expect(line in told, "the next check lists the answered alert", line, told)
     run.wait_store(lambda r: r["lastCheck"]["outcome"] == "verdict: none",

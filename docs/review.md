@@ -2,6 +2,15 @@
 
 Checks a review of this repository applies in addition to the general review instructions.
 
+## Text that the model reads
+
+**Trigger:** a change to `prompts/*.md`, or to a text in `hooks/` that goes into a model request (for example `formatAlerts`, `noteText`, `withFinalAnswer`).
+
+- A change to such a text ships together with an eval run of the prompt that reads it. The PR names the run and its result.
+- Exception: a tiny, very low-risk change may ship without a new eval run, because a run costs too much for it. Examples: a typo, punctuation, or how an existing value is punctuated or quoted when the code fills it in, when no text says anything new. The PR that uses the exception says so and gives the reason.
+- The exception does not cover a change to the meaning of an instruction, to which fields a prompt holds, to what a field says, or to the reply format that the model must produce. It also does not cover a sentence added or removed. Those changes still need an eval run.
+- The HTML comment at the start of a prompt file does not reach the model: `stripLeadingComments` removes it. A change only to that comment needs no eval run.
+
 ## Tests, verification journeys and the harness
 
 **Trigger:** a change to a test file under `hooks/` or to `.agents/skills/verify-course-keeper/`.
