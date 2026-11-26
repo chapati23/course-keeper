@@ -1250,9 +1250,12 @@ function isCompactionSummary(row: SessionMessage): boolean {
 /**
  * True for a message the person sent: a user row with text and no tool
  * results that is neither an engine notice (it starts with `<`) nor a
- * compaction summary. A user row right after a row of tool results is not
- * one either: the engine put it there inside the agent's turn (a skill's
- * text after the skill's tool call, say).
+ * compaction summary. The test reads the text after any leading
+ * system-reminder blocks (`personWords`): the desktop app puts such a block
+ * before some typed prompts, and a row of reminders only is no message. A
+ * user row right after a row of tool results is not one either: the engine
+ * put it there inside the agent's turn (a skill's text after the skill's
+ * tool call, say).
  */
 export function isPersonMessage(
   row: SessionMessage | undefined,
@@ -1261,9 +1264,14 @@ export function isPersonMessage(
   if (row === undefined || row.role !== 'user') return false
   if ((row.toolResults?.length ?? 0) > 0) return false
   if (previous?.role === 'user' && (previous.toolResults?.length ?? 0) > 0) return false
-  const text = row.text.trimStart()
+  const text = personWords(row)
 
   return text !== '' && !text.startsWith('<') && !text.startsWith(COMPACTION_START)
+}
+
+/** A user row's words without its leading system-reminder blocks, trimmed. */
+function personWords(row: SessionMessage): string {
+  return withoutLeadingReminders(row.text).trim()
 }
 
 /** The first and the last row of a turn, both included. */
@@ -1411,7 +1419,8 @@ function latestParts(
 /**
  * The excerpt of the session that an excerpt check reads for one turn: the
  * newest compaction summary before the turn's end, every person message up
- * to the turn's first row in order, and the rows of the turn.
+ * to the turn's first row in order (without its leading system-reminder
+ * blocks), and the rows of the turn as they are.
  */
 export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): string {
   let summary: string | undefined
@@ -1421,7 +1430,7 @@ export function sessionExcerpt(rows: readonly SessionMessage[], turn: Turn): str
     if (row === undefined) continue
     if (isCompactionSummary(row)) summary = row.text.trim()
     // A message the person repeats stays: it can restate an instruction.
-    if (k <= turn.start && isPersonMessage(row, rows[k - 1])) person.push(row.text.trim())
+    if (k <= turn.start && isPersonMessage(row, rows[k - 1])) person.push(personWords(row))
   }
 
   const latest = latestParts(rows, turn)
