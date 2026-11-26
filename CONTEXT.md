@@ -37,7 +37,7 @@ One comparison of a session's work with the vision and the standing instructions
 _Avoid_: scan, review, audit
 
 **Alert**:
-The short message shown to the person when a check finds a deviation. It cites the invariant by its number or quotes the standing instruction.
+The short message shown to the person when a check finds a deviation. It cites the invariant by its number, or quotes the invariant's own words when the vision has no numbers, or quotes the standing instruction.
 _Avoid_: warning, notification, heads-up
 
 **Note**:

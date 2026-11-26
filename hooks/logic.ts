@@ -210,24 +210,80 @@ export type CheckReply =
     }
 
 const FIELD = /^(verdict|reference|alert|instead|evidence|note)\s*:\s*(.*)$/i
-/** A quoted text in straight, curly, German, French or single quotes. */
-const QUOTED = String.raw`(?:"(.*\S.*)"|“(.*\S.*)”|„(.*\S.*)[“”]|«(.*\S.*)»|'(.*\S.*)'|‘(.*\S.*)’)`
+/** The marks that close each opening mark: straight, curly, German, French or single quotes. */
+const CLOSING: Record<string, string> = { '"': '"', '“': '”', '„': '“”', '«': '»', "'": "'", '‘': '’' }
 /**
  * The start of a reference field, after any run of backticks, asterisks or
  * underscores: `invariant <number>`, or `invariant "<text>"` (the
  * invariant's own words) or `instruction "<text>"` with an optional colon
- * and the text in quotes (see QUOTED). A quoted text runs to the last mark in the field that closes
- * its opening mark, so an apostrophe after a double-quoted text does not
- * end it. What comes after the number or the closing mark is not read.
+ * and the text in quotes (see CLOSING and quotedText). What comes after the
+ * number or the closing mark is not read.
  */
 const REFERENCE = {
   invariant: /^[`*_]*invariant\s+(\d+)\b/i,
-  words: new RegExp(String.raw`^[\`*_]*invariant\s*:?\s*${QUOTED}`, 'i'),
-  instruction: new RegExp(String.raw`^[\`*_]*instruction\s*:?\s*${QUOTED}`, 'i'),
+  words: /^[`*_]*invariant\s*:?\s*(["“„«'‘])/i,
+  instruction: /^[`*_]*instruction\s*:?\s*(["“„«'‘])/i,
 }
 
-function quotedText(match: RegExpExecArray | null): string | undefined {
-  return match?.slice(1).find(group => group !== undefined)?.trim()
+/** What may follow a closing mark: the end of the field, a space or a mark that ends a phrase. */
+const AFTER_CLOSE = /(?:$|[\s.,;:!?)\]}*_`])/y
+/**
+ * What may follow a closing single quote, which can also be an apostrophe
+ * (`don't`, `users' data`): the end of the field, or a mark that is no
+ * letter or digit, after any spaces.
+ */
+const AFTER_SINGLE_CLOSE = /\s*(?:$|[^\p{L}\p{N}\s])/uy
+
+/** True when the mark at `index` has an odd run of backslashes before it. */
+function escaped(field: string, index: number): boolean {
+  let count = 0
+  while (field.charAt(index - 1 - count) === '\\') count++
+
+  return count % 2 === 1
+}
+
+/**
+ * The quoted text after the start that `start` matches, trimmed. The text
+ * ends at the first mark that closes the opening mark, is not escaped with
+ * a backslash, and is followed by what AFTER_CLOSE (for single quotes,
+ * AFTER_SINGLE_CLOSE) allows. So an apostrophe in a word does not end it,
+ * and a quotation in a remark after it does not join it. A quotation inside
+ * the text stays whole: in straight double quotes the text holds an even
+ * number of unescaped quote marks, and in curly or French quotes as many
+ * inner opening marks as closing ones. Without such a mark the text runs to
+ * the last closing mark; without any, there is no text.
+ */
+function quotedText(field: string, start: RegExp): string | undefined {
+  const match = start.exec(field)
+  if (!match) return undefined
+  const open = match[1] ?? ''
+  const closers = CLOSING[open] ?? ''
+  const nests = open === '“' || open === '«'
+  const after = open === "'" || open === '‘' ? AFTER_SINGLE_CLOSE : AFTER_CLOSE
+  const from = match[0].length
+  let last: number | undefined
+  let depth = 0
+  let nonSpace = false
+
+  for (let i = from; i < field.length; i++) {
+    const mark = field.charAt(i)
+    if (nests && mark === open) depth++
+    if (!closers.includes(mark) || escaped(field, i)) {
+      nonSpace ||= /\S/.test(mark)
+      continue
+    }
+    if (nonSpace) {
+      last = i
+      const inside = open === '"' ? depth % 2 === 1 : depth > 0
+      after.lastIndex = i + 1
+      if (!inside && after.test(field)) return field.slice(from, i).trim()
+    }
+    if (open === '"') depth++
+    else if (nests && depth > 0) depth--
+    nonSpace ||= /\S/.test(mark)
+  }
+
+  return last === undefined ? undefined : field.slice(from, last).trim()
 }
 
 /** The canonical form of a reference field, or undefined when it has none. */
@@ -235,14 +291,18 @@ function canonicalReference(field: string): string | undefined {
   const invariant = REFERENCE.invariant.exec(field)
   if (invariant) return `invariant ${invariant[1] ?? ''}`
   // An invariant's words are a title: the model's `\"` turns back into `"`,
-  // and bold marks around them and the period that ends the sentence go.
-  const quoted = quotedText(REFERENCE.words.exec(field))
+  // and a matched pair of bold marks around them and the period that ends
+  // the sentence go, whether the period stands inside or after the marks.
+  // An ellipsis keeps its dots, and a lone `*` (a wildcard) stays.
+  const quoted = quotedText(field, REFERENCE.words)
   const words = (quoted === undefined ? undefined : unescapeQuotes(quoted))
-    ?.replace(/^[*_]+|[*_]+$/g, '')
-    .replace(/\.$/, '')
+    ?.replace(/(?<!\.)\.$/, '')
+    .replace(/^([*_]+)(.*)\1$/, '$2')
+    .trim()
+    .replace(/(?<!\.)\.$/, '')
     .trim()
   if (words !== undefined && words !== '') return `invariant "${words}"`
-  const instruction = quotedText(REFERENCE.instruction.exec(field))
+  const instruction = quotedText(field, REFERENCE.instruction)
   if (instruction !== undefined) return `instruction "${instruction}"`
 
   return undefined

@@ -239,6 +239,8 @@ describe('the check reply', () => {
         'instruction "don\'t push to main" (the person\'s words)',
         'instruction "don\'t push to main"',
       ],
+      ['instruction "never push to main" (the person wrote "main")', 'instruction "never push to main"'],
+      ["instruction 'keep users' data private'", `instruction "keep users' data private"`],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
@@ -257,6 +259,24 @@ describe('the check reply', () => {
       ['invariant "One service sets every price" (the second bullet)', 'invariant "One service sets every price"'],
       [String.raw`invariant "Use \"strict\" mode."`, 'invariant "Use "strict" mode"'],
       ['invariant “Use "strict" mode.”', 'invariant "Use "strict" mode"'],
+      ['invariant "Use "strict" mode." (the third bullet)', 'invariant "Use "strict" mode"'],
+      ['invariant "**One service sets every price**."', 'invariant "One service sets every price"'],
+      ['invariant "Wait for the build..."', 'invariant "Wait for the build..."'],
+      ['invariant "**Wait for the build...**."', 'invariant "Wait for the build..."'],
+      [
+        'invariant "One service sets every price" (the model wrote "a price table")',
+        'invariant "One service sets every price"',
+      ],
+      [
+        String.raw`invariant "Use \"strict\" mode" (as in "strict mode")`,
+        'invariant "Use "strict" mode"',
+      ],
+      ["invariant 'Don't round the export' (the 'export' bullet)", `invariant "Don't round the export"`],
+      ['invariant "Never pass "--force" to Git."', 'invariant "Never pass "--force" to Git"'],
+      ["invariant 'Keep users' data private'", `invariant "Keep users' data private"`],
+      ['invariant “Treat “off” as disabled.” (the “flags” bullet)', 'invariant "Treat “off” as disabled"'],
+      ['invariant "Never select columns with SELECT *."', 'invariant "Never select columns with SELECT *"'],
+      [String.raw`invariant "Paths end in \\" (the root)`, String.raw`invariant "Paths end in \\"`],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
