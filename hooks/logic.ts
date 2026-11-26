@@ -230,10 +230,15 @@ const AFTER_CLOSE = /(?:$|[\s.,;:!?)\]}*_`])/y
 /**
  * What may follow a closing single quote, which can also be an apostrophe
  * (`don't`, `users' data`): the end of the field, or a mark that is no
- * letter or digit. After a space, a backtick starts inline code in the text
- * (`the users' \`id\` field`), so it does not count.
+ * letter or digit, after any spaces.
  */
-const AFTER_SINGLE_CLOSE = /(?:$|[^\p{L}\p{N}\s]|\s+(?:$|[^\p{L}\p{N}\s`]))/uy
+const AFTER_SINGLE_CLOSE = /\s*(?:$|[^\p{L}\p{N}\s])/uy
+/**
+ * Spaces and a backtick after a single quote that follows an `s`: a
+ * possessive before inline code in the text (`the users' \`id\` field`),
+ * not a closing mark before a remark in code.
+ */
+const POSSESSIVE_CODE = /\s+`/y
 /**
  * After a straight mark, a run of marks that are no space up to the same
  * mark: the rest of a quoted lone mark such as `"."`.
@@ -258,9 +263,12 @@ function escaped(field: string, index: number): boolean {
  * number of unescaped quote marks, and in curly or French quotes as many
  * inner opening marks as closing ones. A straight mark after a space that
  * starts a quoted word or lone mark (`Reject "." as a name`) opens an inner
- * quotation and closes nothing. Without such a closing mark the text runs
- * to the last closing mark; without any, there is no text. No look ahead or
- * back from a mark passes another quote mark, so the scan takes linear time.
+ * quotation, and neither it nor the mark that closes that quotation closes
+ * the text. A single quote after an `s` and before spaces and a backtick is
+ * a possessive before inline code (see POSSESSIVE_CODE). Without such a
+ * closing mark the text runs to the last closing mark; without any, there
+ * is no text. No look ahead or back from a mark passes another quote mark,
+ * so the scan takes linear time.
  */
 function quotedText(field: string, start: RegExp): string | undefined {
   const match = start.exec(field)
@@ -273,6 +281,7 @@ function quotedText(field: string, start: RegExp): string | undefined {
   let last: number | undefined
   let depth = 0
   let nonSpace = false
+  let inner = -1
 
   for (let i = from; i < field.length; i++) {
     const mark = field.charAt(i)
@@ -286,12 +295,17 @@ function quotedText(field: string, start: RegExp): string | undefined {
     if (lone !== undefined && open === mark && /\s/.test(field.charAt(i - 1))) {
       lone.lastIndex = i + 1
       opens = lone.test(field)
+      // The mark that closes the inner quotation closes nothing outside it.
+      if (opens) inner = lone.lastIndex - 1
     }
     if (nonSpace && !opens) {
       last = i
-      const inside = open === '"' ? depth % 2 === 1 : depth > 0
+      const inside = i === inner || (open === '"' ? depth % 2 === 1 : depth > 0)
       after.lastIndex = i + 1
-      if (!inside && after.test(field)) return field.slice(from, i).trim()
+      POSSESSIVE_CODE.lastIndex = i + 1
+      const possessive =
+        after === AFTER_SINGLE_CLOSE && /s/i.test(field.charAt(i - 1)) && POSSESSIVE_CODE.test(field)
+      if (!inside && !possessive && after.test(field)) return field.slice(from, i).trim()
     }
     if (open === '"') depth++
     else if (nests && depth > 0) depth--
@@ -413,10 +427,12 @@ function unquote(text: string): string {
 
 /**
  * A text in the form that two texts are compared in: one space for each run
- * of spaces, no letter case, and for words (a reference or an instruction)
- * also in Unicode form NFC, so an accent written as its own mark matches the
- * accented letter. toLowerCase, not toLocaleLowerCase, so the result does
- * not depend on the machine's locale.
+ * of spaces and no letter case. For words (a reference or an instruction)
+ * the case goes from the NFC text, and the result is in NFD, so an accent
+ * written as its own mark matches the accented letter, and a text cut in
+ * the middle of an accented letter is still the start of the whole text.
+ * toLowerCase, not toLocaleLowerCase, so the result does not depend on the
+ * machine's locale.
  *
  * Evidence keeps its Unicode form, as before 0.7.1: it is the model's copy
  * of the session's text, two file names can differ only in that form, and
@@ -424,10 +440,11 @@ function unquote(text: string): string {
  * evidence was ignored before 0.7.1 and still is.
  */
 function compareForm(text: string, form: 'words' | 'evidence'): string {
-  return (form === 'words' ? text.normalize('NFC') : text)
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
+  const flat = text.replace(/\s+/g, ' ').trim()
+
+  return form === 'words'
+    ? flat.normalize('NFC').toLowerCase().normalize('NFD')
+    : flat.toLowerCase()
 }
 
 /** True when two texts are equal in compareForm. */
@@ -437,21 +454,18 @@ function same(a: string, b: string, form: 'words' | 'evidence' = 'words'): boole
 
 /**
  * The text of a reference that `clean` cut to LIMITS.reference characters,
- * without its `…` and without its last letter and the accent marks after
- * it, which the cut can have split; undefined for a reference that was not
- * cut. A canonical quoted reference ends with its closing mark, so only a
- * cut one ends with `…`.
+ * without its `…`; undefined for a reference that was not cut. A canonical
+ * quoted reference ends with its closing mark, so only a cut one ends with
+ * `…`.
  */
 function cutReference(reference: string): string | undefined {
-  if (!reference.endsWith('…')) return undefined
-
-  return reference.slice(0, -1).replace(/\P{M}\p{M}*$/u, '')
+  return reference.endsWith('…') ? reference.slice(0, -1) : undefined
 }
 
 /**
  * True when two references cite the same rule: equal in compareForm, or,
- * when the cut to LIMITS.reference characters shortened one of them, equal
- * up to the cut. The cut counts characters of the text as the model wrote
+ * when the cut to LIMITS.reference characters shortened one of them, the
+ * cut one is the start of the other in compareForm. The cut counts characters of the text as the model wrote
  * it, so the same words in other letter case or another Unicode form can
  * be cut at another place.
  */
