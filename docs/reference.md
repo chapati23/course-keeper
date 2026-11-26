@@ -48,13 +48,13 @@ The row has four buttons:
 - `3 False alarm` asks you to press it again ("Confirm false alarm"). The second press closes the alert and records that this is no deviation, or that you wanted it. Later checks are told so, and do not raise it again.
 - `4 Dismiss` closes the alert.
 
-In the terminal, press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. In the desktop app, click a button. Course Keeper also raises a desktop notification where Claude Code offers one. Its title is "Course Keeper: this session breaks invariant 1 (One module computes every amount)", and its text is the sentence about the deviation.
+In the terminal, press ctrl+x tab (or click the row) to give the row the keyboard, then press a number. In the desktop app, click a button. Course Keeper also raises a desktop notification where Claude Code offers one. In the desktop app, it arrives only when the app has turned on notifications for the session; otherwise only the card shows the alert. Its title is "Course Keeper: this session breaks invariant 1 (One module computes every amount)", and its text is the sentence about the deviation.
 
 Course Keeper also notes standing instructions: goals or instructions you state in a prompt that stay in force beyond one task. It shows a short notice when it adds one.
 
 ## The command
 
-- `/course-keeper` shows whether a VISION.md and a ANTI-PATTERNS.md were found, the standing instructions with their numbers, the alerts of this session with your answers, and the result of the last check.
+- `/course-keeper` shows whether a VISION.md and a ANTI-PATTERNS.md were found, the standing instructions with their numbers, the alerts of this session with your answers, and the result of the last check. After a `/course-keeper forget`, it also shows the withdrawn instructions in a list "Withdrawn standing instructions:".
 - `/course-keeper forget <n>` removes standing instruction n. Later checks are told not to enforce it.
 - `/course-keeper check` runs a check now.
 - `/course-keeper off` and `/course-keeper on` switch the checks for this session. Standing instructions are still noted while checks are off.
@@ -65,11 +65,11 @@ Course Keeper also notes standing instructions: goals or instructions you state 
 ## What is sent to the model, and when
 
 - **A check**, at the end of each main-agent turn that ends with an answer. Course Keeper asks one question over a copy of the session: the session's own model gets the conversation as the main thread last sent it, plus the agent's final answer of the turn (the copy does not hold it yet) and the check prompt (`prompts/check.md`) with the text of VISION.md and of ANTI-PATTERNS.md (if there is one), the standing instructions and this session's alerts. The copy has no tools and gives one reply. At most one check runs at a time in a session.
-- **A standing-instruction check**, at each prompt you type that is not a slash command and has at least 12 characters. The `haiku` model gets `prompts/extract.md` and your whole prompt as it entered the session (after any other plugin changed or dropped it), and nothing else. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
+- **A standing-instruction check**, at each prompt you type that has at least 12 characters without the spaces at its start and end, and that does not start with `/` after those spaces. A prompt that starts with a path, such as "/tmp/out is where exports go", gets no such check. The `haiku` model gets `prompts/extract.md` and your whole prompt as it entered the session (after any other plugin changed or dropped it), and nothing else. One prompt adds at most three standing instructions. An instruction that is equal to one in force, apart from case and spacing, is not added again. This happens only in a project that has a VISION.md. It also happens while checks are off for the session.
 - **Tell the agent** sends the note to the agent only when you press the button.
 - **A learn step**, only when you run `/course-keeper learn`. The session's own model gets a copy of the session (a fork, as for a check, with the agent's final answer of the last turn) with the learn prompt (`prompts/learn.md`), the text of VISION.md and of ANTI-PATTERNS.md (if there is one) and your words, if you gave any. After `/course-keeper learn yes`, separate calls send excerpts of the session to the session's model: the summary that replaced the earlier conversation, if there is one, all your messages up to that turn in order, and the rows of one turn. Each call also holds the check prompt (`prompts/check.md`, with `prompts/excerpt-head.md` in place of its head), and the text of VISION.md and of ANTI-PATTERNS.md (if there is one), with or without the draft sentence. It holds no list of standing instructions: the list held now can hold one that your correction created. Your messages in the excerpt show what was in force at that turn. It holds the instructions you withdrew with `/course-keeper forget`, and the check is told not to enforce them.
 
-Course Keeper keeps the standing instructions and alerts of the last 20 sessions in its store, a file under your Claude Code configuration directory. It sends them nowhere else.
+Course Keeper keeps the standing instructions and alerts of the last 20 sessions in its store, a file under your Claude Code configuration directory. It sends them nowhere else. When you run `/compact` in a project with a VISION.md, Course Keeper asks the summarizer to keep the standing instructions word for word.
 
 ## What it costs
 
@@ -80,7 +80,7 @@ Both calls are billed to the session's credentials and count in `/usage`. A chec
 - The plugin API of Claude Code is early access and can change between releases. The plugin needs Claude Code 2.1.323 or later.
 - VS Code has no row above the prompt. There, and on any surface without the row, an alert still exists: `/course-keeper` shows it.
 - In the desktop app, a plugin you install on your computer for yourself (user or local scope) does not reach cloud sessions, and no plugin runs in WSL sessions.
-- Sessions without a person are skipped: `claude -p`, the Agent SDK, sessions that another session drives, and subagents. A session counts as having a person once a prompt arrives from the terminal prompt, from Remote Control, or from its owner in Slack.
+- Sessions without a person are skipped: `claude -p`, sessions that a program drives through the Agent SDK, sessions that another session drives, and subagents. A session counts as having a person once a prompt arrives from the terminal prompt, from the Code tab of the Claude desktop app, from Remote Control, or from its owner in Slack. The desktop app also runs Claude Code through the Agent SDK, but a prompt that you type there counts.
 - A check reads only the conversation and the vision. It cannot read files or run commands, and it can be wrong. You decide.
 - The learn step tests a sentence only on excerpts of this session: the turn you corrected and up to 3 earlier turns. An alert in the test does not prove that the sentence names the right act. Whether an agent that reads the sentence avoids the act is not measured.
 - The learn step finds the turn you corrected by the agent's words: the last reply that holds them before your last message, or your last turn when no earlier reply holds them. The draft keeps that turn by the number of your messages up to its start, and `/course-keeper learn yes` tests that turn. When that turn no longer holds the agent's words (a compaction can remove it), `/course-keeper learn yes` keeps nothing.
