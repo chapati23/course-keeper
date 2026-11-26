@@ -243,6 +243,8 @@ describe('the check reply', () => {
       ['instruction "never push to main" (the person wrote "main")', 'instruction "never push to main"'],
       ["instruction 'keep users' data private'", `instruction "keep users' data private"`],
       ["instruction 'Use the users' `id` field'", "instruction \"Use the users' `id` field\""],
+      ['instruction "Keep backups ".', 'instruction "Keep backups"'],
+      ["instruction 'Keep IDs stable' *see 'Data Rules'*", 'instruction "Keep IDs stable"'],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)
@@ -488,7 +490,7 @@ describe('the duplicate-alert rule', () => {
       const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${replied}`))
       const done = applyReply(record, reply, 2000)
 
-      expect([replied, done.shown]).toEqual([replied, undefined])
+      expect([replied, done.outcome]).toEqual([replied, `verdict: deviation (${replied.replace('."', '"')}), already shown`])
       expect(done.record.alerts.map(a => a.reference)).toEqual([stored])
     }
   })

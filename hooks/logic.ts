@@ -230,11 +230,15 @@ const AFTER_CLOSE = /(?:$|[\s.,;:!?)\]}*_`])/y
 /**
  * What may follow a closing single quote, which can also be an apostrophe
  * (`don't`, `users' data`): the end of the field, or a mark that is no
- * letter or digit. After a space, a backtick, asterisk or underscore starts
- * inline code or emphasis in the text (`the users' \`id\` field`), so it
- * does not count.
+ * letter or digit. After a space, a backtick starts inline code in the text
+ * (`the users' \`id\` field`), so it does not count.
  */
-const AFTER_SINGLE_CLOSE = /(?:$|[^\p{L}\p{N}\s]|\s+(?:$|[^\p{L}\p{N}\s`*_]))/uy
+const AFTER_SINGLE_CLOSE = /(?:$|[^\p{L}\p{N}\s]|\s+(?:$|[^\p{L}\p{N}\s`]))/uy
+/**
+ * After a straight mark, a run of marks that are no space up to the same
+ * mark: the rest of a quoted lone mark such as `"."`.
+ */
+const LONE_MARK = { '"': /[^\s"]+"/y, "'": /[^\s']+'/y } as Record<string, RegExp>
 
 /** True when the mark at `index` has an odd run of backslashes before it. */
 function escaped(field: string, index: number): boolean {
@@ -252,10 +256,9 @@ function escaped(field: string, index: number): boolean {
  * and a quotation in a remark after it does not join it. A quotation inside
  * the text stays whole: in straight double quotes the text holds an even
  * number of unescaped quote marks, and in curly or French quotes as many
- * inner opening marks as closing ones. A straight mark after a space and
- * before a mark that is not a space opens an inner quotation and closes
- * nothing, so a quoted lone mark (`Reject "." as a name`) stays in the
- * text. Without a closing mark the text runs to the last one; without any,
+ * inner opening marks as closing ones. A straight mark after a space that
+ * starts a quoted word or lone mark (`Reject "." as a name`) opens an inner
+ * quotation and closes nothing. Without a closing mark the text runs to the last one; without any,
  * there is no text.
  */
 function quotedText(field: string, start: RegExp): string | undefined {
@@ -277,7 +280,12 @@ function quotedText(field: string, start: RegExp): string | undefined {
       nonSpace ||= /\S/.test(mark)
       continue
     }
-    const opens = open === mark && /\s/.test(field.charAt(i - 1)) && /\S/.test(field.charAt(i + 1))
+    const lone = LONE_MARK[mark]
+    let opens = false
+    if (lone !== undefined && open === mark && /\s/.test(field.charAt(i - 1))) {
+      lone.lastIndex = i + 1
+      opens = lone.test(field)
+    }
     if (nonSpace && !opens) {
       last = i
       const inside = open === '"' ? depth % 2 === 1 : depth > 0
