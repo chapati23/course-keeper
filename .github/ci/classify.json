@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "flags": {
-    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/references/**", "**/scripts/**", "bin/**", ".agents/skills/**"],
+    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/references/**", "**/scripts/**", "**/skills/**", "bin/**"],
     "docs": ["**/*.md", "**/*.mdx", "**/*.txt", "prompts/**", "**/*.prompt*"],
     "workflows": [".github/**"]
   },
   "always_all": [".github/**", "mise.toml", "mise.lock"],
   "requires": {
-    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/scripts/**", "bin/**"]
+    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/scripts/**", "**/skills/**", "bin/**"]
   },
   "ignore": ["LICENSE", "LICENSE.*", ".gitignore", "reports/**", "test-results/**", "playwright-report/**", "coverage/**"],
   "warn_languages": {
