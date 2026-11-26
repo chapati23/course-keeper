@@ -524,6 +524,7 @@ async function runCommand($: $, args: string): Promise<string> {
         vision?.antiPatterns?.path,
         vision?.names ?? files,
         vision?.namedInVision,
+        vision?.text,
       )
     }
     case 'check':

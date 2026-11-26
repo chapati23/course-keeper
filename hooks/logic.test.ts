@@ -47,6 +47,7 @@ import {
   holdsQuote,
   quotedRow,
   wasShown,
+  hasNumberedItems,
   invariantTitle,
   fileName,
   fencedLines,
@@ -1631,6 +1632,26 @@ describe('the anti-patterns file', () => {
       /^VISION\.md: \/r\/VISION\.md\nANTI-PATTERNS\.md: \/r\/ANTI-PATTERNS\.md\nChecks: on/,
     )
     expect(statusText(emptyRecord(), '/r/VISION.md')).not.toContain('ANTI-PATTERNS.md')
+  })
+
+  test('the status says that the anti-patterns file needs a numbered vision', () => {
+    const bullets = '# Vision\n\n- **One module computes every amount.**\n- The tool sends nothing.\n'
+    const note =
+      '  VISION.md has no numbered list. The sections of ANTI-PATTERNS.md ' +
+      'and the learn step find an invariant only by its number.'
+    const status = (anti: string | undefined, vision: string) =>
+      statusText(emptyRecord(), '/r/VISION.md', anti, DEFAULT_FILE_NAMES, undefined, vision)
+    expect(status('/r/ANTI-PATTERNS.md', bullets)).toMatch(
+      /^VISION\.md: \/r\/VISION\.md\nANTI-PATTERNS\.md: \/r\/ANTI-PATTERNS\.md\n {2}VISION\.md has no numbered list\. .*\nChecks: on/,
+    )
+    expect(status('/r/ANTI-PATTERNS.md', bullets)).toContain(note)
+    // Without an anti-patterns file a bullet vision needs no note.
+    expect(status(undefined, bullets)).not.toContain('numbered')
+    // A numbered vision gets no note, with either item mark.
+    expect(status('/r/ANTI-PATTERNS.md', VISION)).not.toContain('numbered')
+    expect(status('/r/ANTI-PATTERNS.md', VISION.replace(/^(\d+)\./gm, '$1)'))).not.toContain('numbered')
+    expect(hasNumberedItems(bullets)).toBe(false)
+    expect(hasNumberedItems(VISION)).toBe(true)
   })
 
   test('the status names the configured files', () => {

@@ -910,15 +910,29 @@ export function antiPatternsDirective(
  */
 export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'
 
-/** The text `/course-keeper` prints. */
+/**
+ * True when a line of the vision is a numbered item (`1.` or `1)`), the same
+ * test that `addSentence` and `addDraftSentence` use to find invariant n.
+ */
+export function hasNumberedItems(vision: string): boolean {
+  return vision.split('\n').some(line => ITEM.test(line))
+}
+
+/**
+ * The text `/course-keeper` prints. With `visionText` and an anti-patterns
+ * file, a vision without numbered items gets a line that says the file needs them.
+ */
 export function statusText(
   record: CourseKeeperSession,
   visionPath: string | undefined,
   antiPatternsPath?: string,
   names: FileNames = DEFAULT_FILE_NAMES,
   namedInVision?: NamedInVision,
+  visionText?: string,
 ): string {
   const named = ` (named in ${names.vision})`
+  const unnumbered =
+    antiPatternsPath !== undefined && visionText !== undefined && !hasNumberedItems(visionText)
   const antiPatternsLines =
     namedInVision === 'missing'
       ? [`${names.antiPatterns}: not found or not readable${named}. The vision alone is used.`]
@@ -934,6 +948,12 @@ export function statusText(
             ...(antiPatternsPath === undefined
               ? []
               : [`${names.antiPatterns}: ${antiPatternsPath}${namedInVision === 'read' ? named : ''}`]),
+            ...(unnumbered
+              ? [
+                  `  ${names.vision} has no numbered list. The sections of ${names.antiPatterns} ` +
+                    'and the learn step find an invariant only by its number.',
+                ]
+              : []),
           ]
   const lines = [
     visionPath === undefined

@@ -1,7 +1,7 @@
 {
   "name": "course-keeper",
   "displayName": "Course Keeper",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Checks a coding session against the project's vision and the person's standing instructions, and alerts the person when it deviates.",
   "author": { "name": "Course Keeper authors" },
   "license": "MIT",
