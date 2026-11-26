@@ -306,6 +306,26 @@ describe('the check reply', () => {
     }
   })
 
+  test('quoted words with 80,000 quote marks are read in linear time', () => {
+    // A scan that looks ahead from each mark to the end of the field takes
+    // billions of steps here.
+    const n = 80000
+    const fields = [
+      `invariant "${'a"'.repeat(n)}`,
+      `invariant "${' "a'.repeat(n)}`,
+      `invariant "${' ".'.repeat(n)}`,
+      `instruction '${"a' ".repeat(n)}`,
+      `instruction '${" 'a".repeat(n)}`,
+      `instruction '${"s' `".repeat(n)}`,
+      `invariant "${'\\"'.repeat(n)}`,
+      `invariant “${'“a'.repeat(n / 2)}${'”a'.repeat(n / 2)}`,
+    ]
+    const started = Date.now()
+    for (const field of fields) parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${field}`))
+
+    expect(Date.now() - started).toBeLessThanOrEqual(2000)
+  })
+
   test('a long quoted instruction is accepted, then cut', () => {
     const words = 'w'.repeat(MAX_INSTRUCTION_LENGTH)
     const reply = parseCheckReply(
@@ -493,6 +513,42 @@ describe('the duplicate-alert rule', () => {
       expect([replied, done.outcome]).toEqual([replied, `verdict: deviation (${replied.replace('."', '"')}), already shown`])
       expect(done.record.alerts.map(a => a.reference)).toEqual([stored])
     }
+  })
+
+  test('long quoted words that the cut shortens at another place are the same reference', () => {
+    // Each pair is one rule: the reply's form has more characters, so the
+    // cut to LIMITS.reference characters ends its stored text earlier. The
+    // tail has no spaces, so neither cut lands on one.
+    const tail = ` ${'exports'.repeat(35)}`
+    for (const [first, again] of [
+      [`invariant "Café prices${tail}"`, `invariant "cafe\u0301 PRICES${tail}"`],
+      [`instruction "İ${'İ'.repeat(5)} stays${tail}"`, `instruction "i\u0307${'i\u0307'.repeat(5)} stays${tail}"`],
+      [`instruction "${'é'.repeat(195)} x"`, `instruction "${'e\u0301'.repeat(195)} x"`],
+    ] as const) {
+      const stored = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${first}`))
+      const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: ${again}`))
+      if (stored?.verdict !== 'deviation' || reply?.verdict !== 'deviation') throw new Error('expected deviations')
+      expect([stored.reference.endsWith('…'), reply.reference.endsWith('…')]).toEqual([true, true])
+      expect(stored.reference.normalize('NFC').toLowerCase()).not.toBe(reply.reference.normalize('NFC').toLowerCase())
+
+      for (const [shown, next] of [
+        [stored.reference, reply],
+        [reply.reference, stored],
+      ] as const) {
+        const record = { ...emptyRecord(), alerts: [alertOf({ reference: shown, answer: 'dismissed' })] }
+        expect([shown, applyReply(record, next, 2000).shown]).toEqual([shown, undefined])
+      }
+    }
+  })
+
+  test('long quoted words that differ before the cut are a new reference', () => {
+    const tail = ' in every export'.repeat(15)
+    const stored = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: invariant "Café prices${tail}"`))
+    const reply = parseCheckReply(DEVIATION.replace('reference: invariant 2', `reference: invariant "Café taxes${tail}"`))
+    if (stored?.verdict !== 'deviation') throw new Error('expected a deviation')
+    const record = { ...emptyRecord(), alerts: [alertOf({ reference: stored.reference, answer: 'dismissed' })] }
+
+    expect(applyReply(record, reply, 2000).shown?.reference).toMatch(/^invariant "Café taxes/)
   })
 
   test('evidence that differs only in Unicode form is new evidence', () => {
@@ -722,6 +778,13 @@ describe('the standing instructions', () => {
 
     expect(done.added).toEqual(['Ask before deleting files'])
     expect(done.list).toHaveLength(2)
+  })
+
+  test('an instruction in another Unicode form is equal and keeps its stored form', () => {
+    const done = addInstructions(['Keep the café menu'], ['keep the cafe\u0301 MENU'])
+
+    expect(done).toEqual({ list: ['Keep the café menu'], added: [] })
+    expect(addWithdrawn(['Keep the café menu'], 'keep the cafe\u0301 MENU')).toEqual(['keep the cafe\u0301 MENU'])
   })
 
   test('at most 30 are kept', () => {

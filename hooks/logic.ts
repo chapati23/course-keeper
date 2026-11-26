@@ -258,8 +258,9 @@ function escaped(field: string, index: number): boolean {
  * number of unescaped quote marks, and in curly or French quotes as many
  * inner opening marks as closing ones. A straight mark after a space that
  * starts a quoted word or lone mark (`Reject "." as a name`) opens an inner
- * quotation and closes nothing. Without a closing mark the text runs to the last one; without any,
- * there is no text.
+ * quotation and closes nothing. Without such a closing mark the text runs
+ * to the last closing mark; without any, there is no text. No look ahead or
+ * back from a mark passes another quote mark, so the scan takes linear time.
  */
 function quotedText(field: string, start: RegExp): string | undefined {
   const match = start.exec(field)
@@ -411,18 +412,60 @@ function unquote(text: string): string {
 }
 
 /**
- * True when two texts are equal apart from letter case and spaces, and for
- * words (a reference or an instruction) also apart from Unicode form: NFC
- * first, so an accent written as its own mark matches the accented letter.
- * Evidence keeps its form, because two file names can differ only in it.
- * toLowerCase, not toLocaleLowerCase, so the result does not depend on the
- * machine's locale.
+ * A text in the form that two texts are compared in: one space for each run
+ * of spaces, no letter case, and for words (a reference or an instruction)
+ * also in Unicode form NFC, so an accent written as its own mark matches the
+ * accented letter. toLowerCase, not toLocaleLowerCase, so the result does
+ * not depend on the machine's locale.
+ *
+ * Evidence keeps its Unicode form, as before 0.7.1: it is the model's copy
+ * of the session's text, two file names can differ only in that form, and
+ * a wider match there hides an alert on new evidence. Letter case in
+ * evidence was ignored before 0.7.1 and still is.
  */
-function same(a: string, b: string, form: 'words' | 'evidence' = 'words'): boolean {
-  const norm = (s: string) =>
-    (form === 'words' ? s.normalize('NFC') : s).toLowerCase().replace(/\s+/g, ' ').trim()
+function compareForm(text: string, form: 'words' | 'evidence'): string {
+  return (form === 'words' ? text.normalize('NFC') : text)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
-  return norm(a) === norm(b)
+/** True when two texts are equal in compareForm. */
+function same(a: string, b: string, form: 'words' | 'evidence' = 'words'): boolean {
+  return compareForm(a, form) === compareForm(b, form)
+}
+
+/**
+ * The text of a reference that `clean` cut to LIMITS.reference characters,
+ * without its `…` and without its last letter and the accent marks after
+ * it, which the cut can have split; undefined for a reference that was not
+ * cut. A canonical quoted reference ends with its closing mark, so only a
+ * cut one ends with `…`.
+ */
+function cutReference(reference: string): string | undefined {
+  if (!reference.endsWith('…')) return undefined
+
+  return reference.slice(0, -1).replace(/\P{M}\p{M}*$/u, '')
+}
+
+/**
+ * True when two references cite the same rule: equal in compareForm, or,
+ * when the cut to LIMITS.reference characters shortened one of them, equal
+ * up to the cut. The cut counts characters of the text as the model wrote
+ * it, so the same words in other letter case or another Unicode form can
+ * be cut at another place.
+ */
+function sameReference(a: string, b: string): boolean {
+  if (same(a, b)) return true
+  const cutA = cutReference(a)
+  const cutB = cutReference(b)
+  if (cutA === undefined && cutB === undefined) return false
+  const textA = compareForm(cutA ?? a, 'words')
+  const textB = compareForm(cutB ?? b, 'words')
+  if (cutA === undefined) return textA.startsWith(textB)
+  if (cutB === undefined) return textB.startsWith(textA)
+
+  return textA.startsWith(textB) || textB.startsWith(textA)
 }
 
 /** True when an alert with this reference and evidence was already shown. */
@@ -436,7 +479,7 @@ export function wasShown(
   // A record from before 0.6.1 can hold evidence with the model's `\"`.
   return all.some(
     a =>
-      same(a.reference, reference) &&
+      sameReference(a.reference, reference) &&
       same(unescapeQuotes(a.evidence), unescapeQuotes(evidence), 'evidence'),
   )
 }
