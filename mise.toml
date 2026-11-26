@@ -19,15 +19,33 @@ shfmt = "3.14.1"
 
 [tasks.secrets]
 description = "Secret scan: the diff from SCAN_BASE when it is set, else the whole tree"
-run = 'if [ -n "${SCAN_BASE:-}" ]; then gitleaks git --redact --exit-code 1 --log-opts="${SCAN_BASE}..HEAD"; else gitleaks dir --redact --exit-code 1 .; fi'
+# --remerge-diff gives each merge commit a patch of the changes its author made beyond the
+# automatic merge, so a secret that only a conflict resolution adds is scanned too.
+# The git log probe runs first: when git log fails (a git older than 2.36, or a SCAN_BASE that
+# does not exist), gitleaks reports "0 commits scanned" and exits 0 (gitleaks 8.30.1).
+run = 'if [ -n "${SCAN_BASE:-}" ]; then git log -n 0 --remerge-diff "${SCAN_BASE}..HEAD" >/dev/null && gitleaks git --redact --exit-code 1 --log-opts="--remerge-diff ${SCAN_BASE}..HEAD"; else gitleaks dir --redact --exit-code 1 .; fi'
 
 [tasks.lint-docs]
 description = "Markdown lint (.markdownlint-cli2.yaml skips the paths that .gitignore ignores)"
 run = "markdownlint-cli2 '**/*.md' '#**/node_modules'"
 
 [tasks.lint-shell]
-description = "Shell lint (shellcheck) and format check (shfmt)"
-run = ["git ls-files -z '*.sh' '*.bash' | xargs -0 -r shellcheck", "shfmt -d ."]
+description = "Shell lint (shellcheck) and format check (shfmt) of the shell files that git does not ignore"
+# shfmt -f=0 lists the shell files that shfmt detects, also by shebang. git ls-files lists the
+# tracked files and the untracked files that no ignore rule matches. awk reads the git list up
+# to the empty record, then prints each shfmt path that the git list holds. So a script in a
+# gitignored agent worktree, or inside a submodule, cannot fail the Gate; CI has neither.
+# The NUL-ended lists keep file names as they are (git quotes a name such as café.sh in line
+# output), and "./" keeps a name that starts with "-" from being an option. A file name with a
+# line break is not supported.
+# The two probes before the pipeline fail the task when shfmt or git cannot run: a pipeline
+# hides those failures, and an empty file list would pass.
+run = [
+  "git ls-files -z '*.sh' '*.bash' | xargs -0 -r shellcheck",
+  "shfmt -f . >/dev/null",
+  "git rev-parse --is-inside-work-tree >/dev/null",
+  '''{ git ls-files -z --cached --others --exclude-standard; printf '\0'; shfmt -f=0 .; } | tr '\0' '\n' | awk 'sep == 0 { if ($0 == "") sep = 1; else keep[$0] = 1; next } ($0 in keep) { print "./" $0 }' | tr '\n' '\0' | xargs -0 -r shfmt -d --''',
+]
 
 [tasks.lint-skills]
 description = "Check every SKILL.md: frontmatter, name, description and relative links"
