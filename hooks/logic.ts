@@ -210,27 +210,39 @@ export type CheckReply =
     }
 
 const FIELD = /^(verdict|reference|alert|instead|evidence|note)\s*:\s*(.*)$/i
+/** A quoted text in straight, curly, German, French or single quotes. */
+const QUOTED = String.raw`(?:"(.*\S.*)"|“(.*\S.*)”|„(.*\S.*)[“”]|«(.*\S.*)»|'(.*\S.*)'|‘(.*\S.*)’)`
 /**
  * The start of a reference field, after any run of backticks, asterisks or
- * underscores: `invariant <number>`, or `instruction "<text>"` with an
- * optional colon and the text in straight, curly, German, French or single
- * quotes. The instruction runs to the last mark in the field that closes
+ * underscores: `invariant <number>`, or `invariant "<text>"` (the invariant's
+ * own words) or `instruction "<text>"` with an optional colon and the text in quotes (see
+ * QUOTED). A quoted text runs to the last mark in the field that closes
  * its opening mark, so an apostrophe after a double-quoted text does not
  * end it. What comes after the number or the closing mark is not read.
  */
 const REFERENCE = {
   invariant: /^[`*_]*invariant\s+(\d+)\b/i,
-  instruction:
-    /^[`*_]*instruction\s*:?\s*(?:"(.*\S.*)"|“(.*\S.*)”|„(.*\S.*)[“”]|«(.*\S.*)»|'(.*\S.*)'|‘(.*\S.*)’)/i,
+  words: new RegExp(String.raw`^[\`*_]*invariant\s*:?\s*${QUOTED}`, 'i'),
+  instruction: new RegExp(String.raw`^[\`*_]*instruction\s*:?\s*${QUOTED}`, 'i'),
+}
+
+function quotedText(match: RegExpExecArray | null): string | undefined {
+  return match?.slice(1).find(group => group !== undefined)?.trim()
 }
 
 /** The canonical form of a reference field, or undefined when it has none. */
 function canonicalReference(field: string): string | undefined {
   const invariant = REFERENCE.invariant.exec(field)
   if (invariant) return `invariant ${invariant[1] ?? ''}`
-  const instruction = REFERENCE.instruction.exec(field)
-  const text = instruction?.slice(1).find(group => group !== undefined)
-  if (text !== undefined) return `instruction "${text.trim()}"`
+  // An invariant's words are a title: bold marks around them and the period
+  // that ends the sentence go.
+  const words = quotedText(REFERENCE.words.exec(field))
+    ?.replace(/^[*_]+|[*_]+$/g, '')
+    .replace(/\.$/, '')
+    .trim()
+  if (words !== undefined && words !== '') return `invariant "${words}"`
+  const instruction = quotedText(REFERENCE.instruction.exec(field))
+  if (instruction !== undefined) return `instruction "${instruction}"`
 
   return undefined
 }
@@ -238,10 +250,11 @@ function canonicalReference(field: string): string | undefined {
 /**
  * Reads a check reply. Returns undefined for a malformed reply: a field
  * given twice, an unknown verdict, a deviation with a field missing, or a
- * reference that does not start with `invariant <number>` or
- * `instruction "<text>"`. The reference comes back in its canonical form,
- * `invariant <number>` or `instruction "<text>"` in straight quotes, with
- * anything after the number or the closing mark dropped.
+ * reference that does not start with `invariant <number>`,
+ * `invariant "<text>"` or `instruction "<text>"`. The reference comes back in its canonical form,
+ * `invariant <number>`, `invariant "<text>"` or `instruction "<text>"` in
+ * straight quotes, with anything after the number or the closing mark
+ * dropped, and for an invariant's words the period at their end.
  */
 export function parseCheckReply(reply: string): CheckReply | undefined {
   const fields = new Map<string, string>()
@@ -569,6 +582,7 @@ export const MAX_HEADLINE_PART = 60
  * starts with one, else the first sentence, without a trailing period,
  * cleaned and cut to MAX_HEADLINE_PART characters. Undefined for a
  * reference that is not `invariant <n>`, or when the vision has no such item.
+ * An `invariant "<text>"` reference carries its title in itself (see quotedWords).
  */
 export function invariantTitle(vision: string, reference: string): string | undefined {
   const wanted = /^invariant (\d+)$/.exec(reference)
@@ -599,16 +613,25 @@ export function invariantTitle(vision: string, reference: string): string | unde
 }
 
 /**
+ * The quoted words of an `invariant "<text>"` or `instruction "<text>"` reference,
+ * cut to MAX_HEADLINE_PART characters, or undefined for another reference.
+ * A stored reference that was cut has no closing mark.
+ */
+function quotedWords(reference: string, kind: 'invariant' | 'instruction'): string | undefined {
+  const match = new RegExp(`^${kind} "(.*)$`).exec(reference)
+
+  return match ? clean((match[1] ?? '').replace(/"$/, ''), MAX_HEADLINE_PART) : undefined
+}
+
+/**
  * What the alert's headline says after "Course Keeper: ", from its
  * reference and the title stored with it.
  */
 export function alertSubject(alert: CourseKeeperAlert): string {
-  const instruction = /^instruction "(.*)$/.exec(alert.reference)
-  if (instruction) {
-    const words = clean((instruction[1] ?? '').replace(/"$/, ''), MAX_HEADLINE_PART)
-
-    return `this session breaks your instruction "${words}"`
-  }
+  const instruction = quotedWords(alert.reference, 'instruction')
+  if (instruction !== undefined) return `this session breaks your instruction "${instruction}"`
+  const words = quotedWords(alert.reference, 'invariant')
+  if (words !== undefined) return `this session breaks your rule "${words}"`
   if (/^invariant \d+$/.test(alert.reference) && alert.title !== undefined) {
     return `this session breaks ${alert.reference} (${alert.title})`
   }
@@ -623,27 +646,28 @@ export function alertHeadline(alert: CourseKeeperAlert): string {
 
 /**
  * The words in the row's top rule: what the session breaks, without the
- * invariant's title or the instruction's words (the next line holds those).
+ * invariant's title or words or the instruction's words (the next line
+ * holds those).
  */
 export function alertBanner(alert: CourseKeeperAlert): string {
   if (/^instruction "/.test(alert.reference)) return 'Session breaks your instruction'
+  if (/^invariant "/.test(alert.reference)) return 'Session breaks your rule'
 
   return `Session breaks ${alert.reference}`
 }
 
 /**
- * The line under the top rule: the invariant's title or the instruction's
- * words, quoted. Undefined for an invariant whose title is not stored.
+ * The line under the top rule: the invariant's title or quoted words, or
+ * the instruction's words, quoted. Undefined for an invariant whose title is
+ * not stored.
  */
 export function alertRule(
   alert: CourseKeeperAlert,
 ): { label: string; words: string } | undefined {
-  const instruction = /^instruction "(.*)$/.exec(alert.reference)
-  if (instruction) {
-    const words = clean((instruction[1] ?? '').replace(/"$/, ''), MAX_HEADLINE_PART)
-
-    return { label: 'Your instruction', words }
-  }
+  const instruction = quotedWords(alert.reference, 'instruction')
+  if (instruction !== undefined) return { label: 'Your instruction', words: instruction }
+  const words = quotedWords(alert.reference, 'invariant')
+  if (words !== undefined) return { label: 'Your rule', words }
   if (/^invariant \d+$/.test(alert.reference) && alert.title !== undefined) {
     return { label: 'Your rule', words: alert.title }
   }

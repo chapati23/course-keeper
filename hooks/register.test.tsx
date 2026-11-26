@@ -604,6 +604,34 @@ test('an instruction reference quotes the words in the headline', async ($, on) 
   await ui.unmount()
 })
 
+test('a vision with bullet rules gets an alert that quotes the rule on every surface', async ($, on) => {
+  const { clock, files, notified } = world(on, () =>
+    DEVIATION.replace('reference: invariant 1', 'reference: invariant "One service sets every price."'),
+  )
+  files['/work/repo/VISION.md'] = '# Example\n\n- One service sets every price.\n'
+
+  await personTypes($, 'ok')
+  await settle(clock)
+  await $.turn.complete(END)
+  await settle(clock)
+
+  expect(notified[0]?.split('\n')[0]).toBe(
+    'Course Keeper: this session breaks your rule "One service sets every price"',
+  )
+  const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await rowLines(terminal)).slice(1, 3)).toEqual([
+    TOP('Session breaks your rule'),
+    '  Your rule: “One service sets every price”',
+  ])
+  await terminal.unmount()
+  const tight = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, maxRows: 5 } })
+  expect((await rowLines(tight))[0]).toBe(`▲ Your rule · ${ACTIONS.trim()}`)
+  await tight.unmount()
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await rowLines(desktop))[0]).toBe(CARD[0])
+  await desktop.unmount()
+})
+
 test('an alert stored before alerts kept a title still draws, without a title', async ($, on) => {
   world(on, () => 'verdict: none')
   // A record as an earlier version wrote it: the alert has no title field.

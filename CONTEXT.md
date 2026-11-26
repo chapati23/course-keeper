@@ -11,7 +11,7 @@ The project's short statement of what it is and what every change must keep true
 _Avoid_: mission, north star, principles
 
 **Invariant**:
-One numbered, testable statement in the vision that a session must not contradict.
+One testable statement in the vision that a session must not contradict, usually numbered. An alert cites it by its number, or by its own words when the vision has no numbers.
 _Avoid_: rule, principle, guideline
 
 **Anti-patterns file**:

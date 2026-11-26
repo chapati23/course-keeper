@@ -21,7 +21,9 @@ import {
   addInstructions,
   addSentence,
   addWithdrawn,
+  alertBanner,
   alertHeadline,
+  alertRule,
   alertSubject,
   antiPatternsDirective,
   applyReply,
@@ -245,6 +247,37 @@ describe('the check reply', () => {
     }
   })
 
+  test("an invariant's quoted words are accepted in canonical form, without bold marks or the end period", () => {
+    for (const [reference, canonical] of [
+      ['invariant "One service sets every price"', 'invariant "One service sets every price"'],
+      ['invariant "One service sets every price."', 'invariant "One service sets every price"'],
+      ['Invariant: “One service sets every price.”', 'invariant "One service sets every price"'],
+      ['`invariant "**The tool never sends an invoice.**"`', 'invariant "The tool never sends an invoice"'],
+      ["invariant 'Keine Rundung im Export'", 'invariant "Keine Rundung im Export"'],
+      ['invariant "One service sets every price" (the second bullet)', 'invariant "One service sets every price"'],
+    ] as const) {
+      const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
+      const parsed = parseCheckReply(reply)
+      const got = parsed?.verdict === 'deviation' ? parsed.reference : parsed
+      expect([reference, got]).toEqual([reference, canonical])
+    }
+  })
+
+  test('invariant words that are empty, unquoted or unclosed are malformed', () => {
+    for (const reference of [
+      'invariant ""',
+      'invariant: " "',
+      'invariant "."',
+      'invariant "**.**"',
+      'invariant one service sets every price',
+      'invariant "one service sets every price',
+      'invariants "one service"',
+    ]) {
+      const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
+      expect([reference, parseCheckReply(reply)]).toEqual([reference, undefined])
+    }
+  })
+
   test('a long quoted instruction is accepted, then cut', () => {
     const words = 'w'.repeat(MAX_INSTRUCTION_LENGTH)
     const reply = parseCheckReply(
@@ -409,6 +442,16 @@ describe('the duplicate-alert rule', () => {
     expect(done.outcome).toBe('verdict: deviation (invariant 2), already shown')
   })
 
+  test('invariant words quoted again with or without their end period are the same reference', () => {
+    const reference = 'invariant "One service sets every price"'
+    const record = { ...emptyRecord(), alerts: [alertOf({ reference, answer: 'dismissed' })] }
+    const reply = parseCheckReply(
+      DEVIATION.replace('reference: invariant 2', 'reference: invariant "One service sets every price."'),
+    )
+
+    expect(applyReply(record, reply, 2000).outcome).toBe(`verdict: deviation (${reference}), already shown`)
+  })
+
   test('the current alert counts as shown', () => {
     const record = { ...emptyRecord(), current: alertOf() }
     expect(applyReply(record, parseCheckReply(DEVIATION), 2000).shown).toBeUndefined()
@@ -494,6 +537,52 @@ describe('the headline', () => {
     expect(alertSubject(alertOf({ reference: `instruction "${long}"` }))).toBe(
       `this session breaks your instruction "${clean(long, 60)}"`,
     )
+  })
+
+  test('a vision with bullet rules gets a headline that quotes the rule', () => {
+    const bullets = [
+      '# Vision',
+      '',
+      '- One module computes every amount. No other code does arithmetic on money.',
+      '- **The tool never sends an invoice.** It writes files; the person sends them.',
+      '',
+    ].join('\n')
+    const reply = parseCheckReply(
+      DEVIATION.replace('reference: invariant 2', 'reference: invariant "The tool never sends an invoice."'),
+    )
+    if (reply?.verdict !== 'deviation') throw new Error('expected a deviation')
+    // The words stand in the reference; the vision gives no title for it.
+    expect(invariantTitle(bullets, reply.reference)).toBeUndefined()
+    const alert = alertOf({ reference: reply.reference })
+
+    expect(alertHeadline(alert)).toBe(
+      'Course Keeper: this session breaks your rule "The tool never sends an invoice"',
+    )
+    expect(alertBanner(alert)).toBe('Session breaks your rule')
+    expect(alertRule(alert)).toEqual({ label: 'Your rule', words: 'The tool never sends an invoice' })
+  })
+
+  test('long invariant words are cut to 60 characters, also when the stored reference lost its closing mark', () => {
+    const long = `Every change keeps the test suite green${' and more'.repeat(5)}`
+    expect(alertSubject(alertOf({ reference: `invariant "${long}"` }))).toBe(
+      `this session breaks your rule "${clean(long, 60)}"`,
+    )
+    expect(alertSubject(alertOf({ reference: `invariant "${long}` }))).toBe(
+      `this session breaks your rule "${clean(long, 60)}"`,
+    )
+  })
+
+  test('a numbered vision keeps the number and its title in the headline', () => {
+    const reply = parseCheckReply(DEVIATION)
+    if (reply?.verdict !== 'deviation') throw new Error('expected a deviation')
+    const title = invariantTitle(VISION, reply.reference)
+    const alert = alertOf({ reference: reply.reference, ...(title === undefined ? {} : { title }) })
+
+    expect(alertHeadline(alert)).toBe(
+      'Course Keeper: this session breaks invariant 2 (The tool never sends an invoice)',
+    )
+    expect(alertBanner(alert)).toBe('Session breaks invariant 2')
+    expect(alertRule(alert)).toEqual({ label: 'Your rule', words: 'The tool never sends an invoice' })
   })
 
   test('another reference is named as it stands', () => {
