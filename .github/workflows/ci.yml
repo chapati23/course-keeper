@@ -77,7 +77,7 @@ jobs:
       - name: require mise.lock
         run: test -f mise.lock || { echo "::error file=mise.toml::mise.lock is missing. Run mise lock --platform linux-x64 and commit mise.lock."; exit 1; }
       - name: set up mise and the pinned tools
-        uses: jdx/mise-action@v5.2.7
+        uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.7
           install: true
@@ -128,7 +128,7 @@ jobs:
       - name: require mise.lock
         run: test -f mise.lock || { echo "::error file=mise.toml::mise.lock is missing. Run mise lock --platform linux-x64 and commit mise.lock."; exit 1; }
       - name: set up mise and the pinned tools
-        uses: jdx/mise-action@v5.2.7
+        uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.7
           install: true
