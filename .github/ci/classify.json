@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "flags": {
-    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/references/**", "**/scripts/**", "bin/**"],
+    "code": ["**/*.sh", "**/*.bash", "**/*.bats", "**/SKILL.md", "**/references/**", "**/scripts/**", "bin/**", ".agents/skills/**"],
     "docs": ["**/*.md", "**/*.mdx", "**/*.txt", "prompts/**", "**/*.prompt*"],
     "workflows": [".github/**"]
   },

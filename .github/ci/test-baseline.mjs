@@ -41,7 +41,13 @@ import { fileURLToPath } from 'node:url';
 const EXIT = { OK: 0, FAIL: 1, INCOMPLETE: 2 };
 
 export function countJUnit(xml) {
-  const text = String(xml).replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  // Remove comments and CDATA until none is left: one pass over `<!-<!---->-` leaves `<!--`,
+  // and a testcase inside the comment it opens would count.
+  let text = String(xml);
+  for (let prev = null; prev !== text;) {
+    prev = text;
+    text = text.replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  }
   const counts = { total: 0, skipped: 0, failures: 0, errors: 0 };
   const re = /<testcase\b(?:[^>"']|"[^"]*"|'[^']*')*?(\/>|>([\s\S]*?)<\/testcase\s*>)/g;
   let m;
