@@ -255,6 +255,8 @@ describe('the check reply', () => {
       ['`invariant "**The tool never sends an invoice.**"`', 'invariant "The tool never sends an invoice"'],
       ["invariant 'Keine Rundung im Export'", 'invariant "Keine Rundung im Export"'],
       ['invariant "One service sets every price" (the second bullet)', 'invariant "One service sets every price"'],
+      [String.raw`invariant "Use \"strict\" mode."`, 'invariant "Use "strict" mode"'],
+      ['invariant “Use "strict" mode.”', 'invariant "Use "strict" mode"'],
     ] as const) {
       const reply = DEVIATION.replace('reference: invariant 2', `reference: ${reference}`)
       const parsed = parseCheckReply(reply)

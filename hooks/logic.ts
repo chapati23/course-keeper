@@ -214,9 +214,9 @@ const FIELD = /^(verdict|reference|alert|instead|evidence|note)\s*:\s*(.*)$/i
 const QUOTED = String.raw`(?:"(.*\S.*)"|“(.*\S.*)”|„(.*\S.*)[“”]|«(.*\S.*)»|'(.*\S.*)'|‘(.*\S.*)’)`
 /**
  * The start of a reference field, after any run of backticks, asterisks or
- * underscores: `invariant <number>`, or `invariant "<text>"` (the invariant's
- * own words) or `instruction "<text>"` with an optional colon and the text in quotes (see
- * QUOTED). A quoted text runs to the last mark in the field that closes
+ * underscores: `invariant <number>`, or `invariant "<text>"` (the
+ * invariant's own words) or `instruction "<text>"` with an optional colon
+ * and the text in quotes (see QUOTED). A quoted text runs to the last mark in the field that closes
  * its opening mark, so an apostrophe after a double-quoted text does not
  * end it. What comes after the number or the closing mark is not read.
  */
@@ -234,9 +234,10 @@ function quotedText(match: RegExpExecArray | null): string | undefined {
 function canonicalReference(field: string): string | undefined {
   const invariant = REFERENCE.invariant.exec(field)
   if (invariant) return `invariant ${invariant[1] ?? ''}`
-  // An invariant's words are a title: bold marks around them and the period
-  // that ends the sentence go.
-  const words = quotedText(REFERENCE.words.exec(field))
+  // An invariant's words are a title: the model's `\"` turns back into `"`,
+  // and bold marks around them and the period that ends the sentence go.
+  const quoted = quotedText(REFERENCE.words.exec(field))
+  const words = (quoted === undefined ? undefined : unescapeQuotes(quoted))
     ?.replace(/^[*_]+|[*_]+$/g, '')
     .replace(/\.$/, '')
     .trim()
@@ -251,8 +252,8 @@ function canonicalReference(field: string): string | undefined {
  * Reads a check reply. Returns undefined for a malformed reply: a field
  * given twice, an unknown verdict, a deviation with a field missing, or a
  * reference that does not start with `invariant <number>`,
- * `invariant "<text>"` or `instruction "<text>"`. The reference comes back in its canonical form,
- * `invariant <number>`, `invariant "<text>"` or `instruction "<text>"` in
+ * `invariant "<text>"` or `instruction "<text>"`. The reference comes back
+ * in its canonical form, `invariant <number>`, `invariant "<text>"` or `instruction "<text>"` in
  * straight quotes, with anything after the number or the closing mark
  * dropped, and for an invariant's words the period at their end.
  */
