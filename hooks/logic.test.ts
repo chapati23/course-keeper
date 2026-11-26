@@ -1650,6 +1650,9 @@ describe('the anti-patterns file', () => {
     // A numbered vision gets no note, with either item mark.
     expect(status('/r/ANTI-PATTERNS.md', VISION)).not.toContain('numbered')
     expect(status('/r/ANTI-PATTERNS.md', VISION.replace(/^(\d+)\./gm, '$1)'))).not.toContain('numbered')
+    // A numbered line in a fenced example is code, not an invariant.
+    const fencedExample = `${bullets}\n\`\`\`text\n1. Display the price\n\`\`\`\n`
+    expect(status('/r/ANTI-PATTERNS.md', fencedExample)).toContain(note)
     expect(hasNumberedItems(bullets)).toBe(false)
     expect(hasNumberedItems(VISION)).toBe(true)
   })

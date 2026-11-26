@@ -911,11 +911,14 @@ export function antiPatternsDirective(
 export type NamedInVision = 'read' | 'missing' | 'vision' | 'refused'
 
 /**
- * True when a line of the vision is a numbered item (`1.` or `1)`), the same
- * test that `addSentence` and `addDraftSentence` use to find invariant n.
+ * True when a line of the vision outside a fenced code block is a numbered
+ * item (`1.` or `1)`), by the test that `addSentence` uses to find invariant n.
  */
 export function hasNumberedItems(vision: string): boolean {
-  return vision.split('\n').some(line => ITEM.test(line))
+  const lines = vision.split('\n')
+  const fenced = fencedLines(lines)
+
+  return lines.some((line, i) => !fenced[i] && ITEM.test(line))
 }
 
 /**
